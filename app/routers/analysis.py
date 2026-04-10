@@ -31,108 +31,161 @@ async def analyse(req: AnalysisRequest):
     t0 = time.perf_counter()
     steps, metrics, insights, charts = [], [], [], []
     df = None
+    elite_context = None
 
-    # ── Step 1: Ingest ────────────────────────────────────────────────────────
+    # ── STEP 1: Ingest ────────────────────────────────────────────────────────
     t = time.perf_counter()
     if req.inline_data:
         raw_df = pd.DataFrame(req.inline_data)
 
-        # ── Step 2: Clean ─────────────────────────────────────────────────────
+        # ── STEP 2: Clean ─────────────────────────────────────────────────────
         tc = time.perf_counter()
         df, cleaning_report = analysis_service.clean_data(raw_df)
-        imp_count = len(cleaning_report["steps"][3].get("columns_imputed", {}))
-        win_count = len(cleaning_report["steps"][4].get("columns_winsorised", {}))
-        dup_count = cleaning_report["steps"][2].get("rows_removed", 0)
+        imp = cleaning_report["steps"][3].get("columns_imputed", {})
+        win = cleaning_report["steps"][4].get("columns_winsorised", {})
+        dup = cleaning_report["steps"][2].get("rows_removed", 0)
+        type_issues = len(cleaning_report.get("evidence", {}))
         steps.append(_step("Data received", "Pandas",
-                           ms=(time.perf_counter()-t)*1000,
-                           preview=f"{len(raw_df)} rows x {len(raw_df.columns)} columns"))
+            ms=(time.perf_counter()-t)*1000,
+            preview=f"{len(raw_df)} rows × {len(raw_df.columns)} columns ingested"))
         steps.append(_step("Data cleaning", "Pandas · NumPy · SciPy",
-                           ms=(time.perf_counter()-tc)*1000,
-                           preview=f"Duplicates removed: {dup_count} · Missing filled: {imp_count} cols · Outliers capped: {win_count} cols"))
+            ms=(time.perf_counter()-tc)*1000,
+            preview=f"Duplicates removed: {dup} · Missing filled: {len(imp)} columns · "
+                    f"Outliers capped: {len(win)} columns · Type issues flagged: {type_issues}"))
+
+        # ── STEP 3: Elite deep analysis ───────────────────────────────────────
+        te = time.perf_counter()
+        try:
+            elite_context = analysis_service.elite_analyse(df, req.query, req.industry.value)
+
+            # Convert elite findings to Insight objects
+            for f in elite_context["findings"][:6]:
+                ev = f.get("evidence", {})
+                confidence = f.get("confidence", 0.7)
+                impact = f.get("impact_score", 0)
+
+                if f["type"] == "anomaly":
+                    body = (
+                        f"Detected {ev.get('anomaly_count', '?')} anomalous records "
+                        f"({ev.get('anomaly_pct', '?')}% of data). "
+                        f"Normal range: [{ev.get('normal_range', ['?','?'])[0]}, {ev.get('normal_range', ['?','?'])[1]}]. "
+                        f"Anomalous values found: {ev.get('anomaly_values', [])[:3]}. "
+                        f"These values inflate the average by {ev.get('impact_on_mean_pct', '?')}%. "
+                        f"Max Z-score: {ev.get('z_score_max', '?')}σ."
+                    )
+                elif f["type"] == "trend":
+                    sig = "statistically significant" if ev.get("statistically_significant") else "not yet statistically significant"
+                    body = (
+                        f"Over {ev.get('period_count', '?')} periods, {f['column'].replace('_',' ')} changed "
+                        f"{ev.get('total_change_pct', '?')}% (from {ev.get('first_value','?')} to {ev.get('last_value','?')}). "
+                        f"R² = {ev.get('r_squared', '?')} — trend is {sig} "
+                        f"(p = {ev.get('p_value', '?')})."
+                    )
+                else:
+                    body = f["title"]
+
+                insights.append(Insight(
+                    title=f["title"],
+                    body=body,
+                    severity=f.get("severity", "info"),
+                    source=f"{f.get('method', 'Statistical analysis')} · Confidence: {round(confidence*100)}%",
+                    confidence=confidence,
+                ))
+
+            # Convert correlations to insights
+            for c in elite_context.get("correlations", [])[:2]:
+                if c["significant"]:
+                    insights.append(Insight(
+                        title=f"Strong relationship: {c['col1'].replace('_',' ')} ↔ {c['col2'].replace('_',' ')}",
+                        body=(
+                            f"Pearson r = {c['correlation']} ({c['strength']} {c['direction']} correlation), "
+                            f"p = {c['p_value']} (statistically significant), "
+                            f"based on {c['n_observations']} observations. "
+                            f"{c['interpretation']}."
+                        ),
+                        severity="info",
+                        source="Pearson correlation · scipy.stats",
+                        confidence=0.90,
+                    ))
+
+            # Convert uncertainty flags to insights
+            for u in elite_context.get("uncertainty", [])[:2]:
+                insights.append(Insight(
+                    title=f"Data limitation: {u['issue']}",
+                    body=u["detail"],
+                    severity="warning",
+                    source="Self-audit",
+                    confidence=1.0,
+                ))
+
+            # Build metrics from elite context
+            dg = elite_context["data_grounding"]
+            metrics.append(Metric(label="Rows analysed", value=str(dg["total_rows_analysed"])))
+            metrics.append(Metric(label="Findings detected", value=str(len(elite_context["findings"]))))
+            metrics.append(Metric(label="Segments checked", value=str(dg["segments_analysed"])))
+            if dg["highest_confidence_finding"] > 0:
+                metrics.append(Metric(
+                    label="Top confidence",
+                    value=f"{round(dg['highest_confidence_finding']*100)}%",
+                    trend="up" if dg["highest_confidence_finding"] > 0.8 else "flat",
+                ))
+
+            steps.append(_step("Elite analysis", "NumPy · SciPy · Scikit-learn",
+                ms=(time.perf_counter()-te)*1000,
+                preview=(
+                    f"{len(elite_context['findings'])} findings · "
+                    f"{len(elite_context['correlations'])} correlations · "
+                    f"{sum(len(v['metrics']) for v in elite_context['segmentation'].values())} segments"
+                )))
+        except Exception as e:
+            logger.warning(f"Elite analysis failed: {e}")
+            steps.append(_step("Elite analysis", "NumPy · SciPy", status="error", preview=str(e)))
+
+        # ── STEP 4: Quality metrics ────────────────────────────────────────────
+        t = time.perf_counter()
+        quality = analysis_service.quality_report(df)
+        metrics.insert(0, Metric(
+            label="Data quality",
+            value=f"{quality['overall_score']}%",
+            trend="up" if quality["overall_score"] > 85 else "down",
+        ))
+        steps.append(_step("Quality scored", "Pandas",
+            ms=(time.perf_counter()-t)*1000,
+            preview=f"Score: {quality['overall_score']}% · Missing: {quality['missing_cells']} cells"))
+
     else:
         steps.append(_step("Data received", "API", ms=1.0, preview="No dataset — AI analysis only"))
 
-    # ── Step 3: Quality ───────────────────────────────────────────────────────
-    if df is not None:
-        t = time.perf_counter()
-        quality = analysis_service.quality_report(df)
-        steps.append(_step("Quality checked", "Pandas + NumPy",
-                           ms=(time.perf_counter()-t)*1000,
-                           preview=f"Quality score: {quality['overall_score']}%"))
-        metrics.append(Metric(label="Data Quality Score",
-                              value=f"{quality['overall_score']}%",
-                              trend="up" if quality["overall_score"] > 85 else "down"))
-        if quality["missing_cells"] > 0:
-            insights.append(Insight(
-                title="Missing data was found and filled",
-                body=f"{quality['missing_cells']} missing values were detected. We filled numeric gaps with the median value and text gaps with the most common value.",
-                severity="warning", source="Data quality scan"))
-
-    # ── Step 4: Statistics ────────────────────────────────────────────────────
-    if df is not None:
-        t = time.perf_counter()
-        desc = analysis_service.describe(df)
-        numeric_cols = [c for c, t_ in desc["dtypes"].items() if "float" in t_ or "int" in t_]
-        if numeric_cols:
-            col = numeric_cols[0]
-            metrics.append(Metric(label=f"{col} average",
-                                  value=round(float(df[col].dropna().mean()), 2)))
-            metrics.append(Metric(label=f"{col} variation",
-                                  value=round(float(df[col].dropna().std()), 2)))
-        steps.append(_step("Statistics calculated", "Pandas + Statsmodels",
-                           ms=(time.perf_counter()-t)*1000,
-                           preview=f"{len(numeric_cols)} numeric columns analysed"))
-
-    # ── Step 5: Anomaly detection ─────────────────────────────────────────────
-    if df is not None and req.enable_anomaly_detection:
-        t = time.perf_counter()
-        numeric_cols = df.select_dtypes(include="number").columns.tolist()
-        total_anomalies = 0
-        for col in numeric_cols[:3]:
-            try:
-                result = analysis_service.detect_anomalies(df, col, "zscore")
-                total_anomalies += result["anomaly_count"]
-                if result["anomaly_count"] > 0:
-                    insights.append(Insight(
-                        title=f"Unusual values found in {col.replace('_', ' ')}",
-                        body=f"We found {result['anomaly_count']} readings ({result['anomaly_pct']}% of records) that are significantly different from the normal range. These may indicate errors, exceptional events, or trends worth investigating.",
-                        severity="critical" if result["anomaly_pct"] > 5 else "warning",
-                        source="Z-score statistical method",
-                        confidence=0.92))
-            except Exception as e:
-                logger.warning(f"Anomaly scan failed for {col}: {e}")
-        steps.append(_step("Patterns checked", "Scikit-learn",
-                           ms=(time.perf_counter()-t)*1000,
-                           preview=f"{total_anomalies} unusual values flagged"))
-
-    # ── Step 6: Forecast ──────────────────────────────────────────────────────
+    # ── STEP 5: Forecast ──────────────────────────────────────────────────────
     if df is not None and req.enable_forecast:
         t = time.perf_counter()
         numeric_cols = df.select_dtypes(include="number").columns.tolist()
         if numeric_cols and len(df) >= 20:
             try:
                 series = df[numeric_cols[0]].dropna()
-                forecast_result = analysis_service.forecast_arima(series, 12)
+                fr = analysis_service.forecast_arima(series, 12)
                 metrics.append(Metric(
                     label="Next period forecast",
-                    value=round(forecast_result["forecast"][0], 2),
-                    trend="up" if forecast_result["forecast"][0] > series.iloc[-1] else "down"))
+                    value=round(fr["forecast"][0], 2),
+                    trend="up" if fr["forecast"][0] > float(series.iloc[-1]) else "down",
+                ))
                 fig = viz_service.plotly_forecast(
-                    series.tolist()[-30:],
-                    forecast_result["forecast"],
-                    forecast_result["lower_bound"],
-                    forecast_result["upper_bound"],
-                    f"{numeric_cols[0].replace('_', ' ')} — Forecast")
-                charts.append(ChartData(chart_type="forecast",
-                                        title=f"{numeric_cols[0].replace('_', ' ')} Forecast",
-                                        data=fig,
-                                        description="12-period ahead forecast with confidence range"))
+                    series.tolist()[-30:], fr["forecast"],
+                    fr["lower_bound"], fr["upper_bound"],
+                    f"{numeric_cols[0].replace('_',' ')} — Forecast")
+                charts.append(ChartData(
+                    chart_type="forecast",
+                    title=f"{numeric_cols[0].replace('_',' ')} Forecast",
+                    data=fig,
+                    description=f"12-period ahead forecast using {fr['model']} · AIC: {fr['aic']}",
+                ))
                 steps.append(_step("Forecast generated", "Statsmodels ARIMA",
-                                   ms=(time.perf_counter()-t)*1000))
+                    ms=(time.perf_counter()-t)*1000,
+                    preview=f"Model: {fr['model']} · AIC: {fr['aic']}"))
             except Exception as e:
                 logger.warning(f"Forecast failed: {e}")
 
-    # ── Step 7: Charts ────────────────────────────────────────────────────────
+    # ── STEP 6: Charts ────────────────────────────────────────────────────────
     if df is not None and req.enable_viz:
         t = time.perf_counter()
         try:
@@ -140,43 +193,55 @@ async def analyse(req: AnalysisRequest):
             for c in auto:
                 charts.append(ChartData(chart_type=c["type"], title=c["title"], data=c["figure"]))
             steps.append(_step("Charts built", "Plotly",
-                               ms=(time.perf_counter()-t)*1000,
-                               preview=f"{len(auto)} charts generated"))
+                ms=(time.perf_counter()-t)*1000,
+                preview=f"{len(auto)} interactive charts generated"))
         except Exception as e:
             logger.warning(f"Viz failed: {e}")
 
-    # ── Step 8: AI narrative ──────────────────────────────────────────────────
+    # ── STEP 7: Elite AI narrative ─────────────────────────────────────────────
     t = time.perf_counter()
-    context = f"Industry: {req.industry.value}\nQuestion asked: {req.query}"
+    context_msg = f"Industry: {req.industry.value}\nUser question: {req.query}"
     if df is not None:
         desc = analysis_service.describe(df)
-        context += f"\nDataset: {desc['shape']['rows']} rows x {desc['shape']['columns']} columns"
-        context += f"\nColumns: {list(desc['dtypes'].keys())}"
-    if metrics:
-        context += "\nKey metrics: " + ", ".join([f"{m.label}={m.value}" for m in metrics])
-    if insights:
-        context += "\nFindings already detected: " + "; ".join([i.title for i in insights])
+        context_msg += f"\nDataset: {desc['shape']['rows']} rows × {desc['shape']['columns']} columns"
+        context_msg += f"\nColumns available: {list(desc['dtypes'].keys())}"
 
-    messages = req.conversation_history + [{"role": "user", "content": context}]
+    messages = req.conversation_history + [{"role": "user", "content": context_msg}]
+
     try:
-        narrative, tokens = await llm_service.chat(
-            messages=messages, industry=req.industry.value,
-            provider=req.provider, model=req.model, max_tokens=1500)
+        narrative, tokens, provider_used = await llm_service.chat(
+            messages=messages,
+            industry=req.industry.value,
+            provider=req.provider,
+            model=req.model,
+            max_tokens=2500,
+            elite_context=elite_context,
+        )
+        steps.append(_step("AI report written", f"{req.provider.value}",
+            ms=(time.perf_counter()-t)*1000,
+            preview=f"{tokens} tokens · {provider_used}"))
     except Exception as e:
-        narrative = f"Analysis complete. AI narrative unavailable: {e}"
+        narrative = f"AI analysis unavailable: {e}"
         tokens = 0
-
-    steps.append(_step("AI recommendations written", f"{req.provider.value}",
-                       ms=(time.perf_counter()-t)*1000,
-                       preview=f"{tokens} tokens used"))
+        provider_used = req.provider.value
+        steps.append(_step("AI report", provider_used, status="error", preview=str(e)))
 
     return AnalysisResponse(
-        query=req.query, industry=req.industry.value,
-        provider=req.provider.value, model=req.model or "default",
-        narrative=narrative, metrics=metrics, insights=insights,
-        charts=charts, pipeline_steps=steps,
+        query=req.query,
+        industry=req.industry.value,
+        provider=provider_used.split(" ")[0].lower() if " " in provider_used else req.provider.value,
+        model=req.model or provider_used,
+        narrative=narrative,
+        metrics=metrics,
+        insights=insights,
+        charts=charts,
+        pipeline_steps=steps,
+        raw_data_preview=(
+            json.loads(df.head(6).to_json(orient="records")) if df is not None else None
+        ),
         execution_ms=round((time.perf_counter()-t0)*1000, 1),
-        tokens_used=tokens)
+        tokens_used=tokens,
+    )
 
 
 @router.post("/describe")
