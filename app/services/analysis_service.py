@@ -9,124 +9,75 @@ logger = logging.getLogger(__name__)
 
 class DataAnalysisService:
 
-    # ── DATA CLEANING ─────────────────────────────────────────────────────────
-
     def clean_data(self, df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
-        """
-        Full data cleaning pipeline. Runs automatically before every analysis.
-        Returns (cleaned_df, cleaning_report).
-
-        Steps:
-        1. Strip whitespace from string columns
-        2. Infer and fix data types (dates, numeric strings)
-        3. Remove exact duplicate rows
-        4. Impute missing values (median for numeric, mode for categorical)
-        5. Winsorise outliers (cap at 3 std deviations)
-        6. Log-transform heavily skewed numeric columns (skewness > 1.5)
-        """
         original_shape = df.shape
         report = {
             "original_rows": original_shape[0],
             "original_cols": original_shape[1],
             "steps": [],
         }
-
         df = df.copy()
 
-        # Step 1 — Strip whitespace from all string columns
+        # Step 1 — Strip whitespace
         str_cols = df.select_dtypes(include="object").columns
         for col in str_cols:
             df[col] = df[col].astype(str).str.strip()
             df[col] = df[col].replace({"nan": np.nan, "None": np.nan, "": np.nan})
-        report["steps"].append({
-            "step": "Whitespace strip",
-            "library": "Pandas",
-            "affected_columns": len(str_cols),
-        })
+        report["steps"].append({"step": "Whitespace strip", "library": "Pandas", "affected_columns": len(str_cols)})
 
-        # Step 2 — Infer dates and numeric strings
+        # Step 2 — Infer types
         converted = []
         for col in df.select_dtypes(include="object").columns:
-            # Try date parsing
             try:
-                parsed = pd.to_datetime(df[col], infer_datetime_format=True, errors="raise")
-                df[col] = parsed
+                df[col] = pd.to_datetime(df[col], infer_datetime_format=True, errors="raise")
                 converted.append(f"{col} -> datetime")
                 continue
             except Exception:
                 pass
-            # Try numeric parsing
             try:
-                numeric = pd.to_numeric(df[col].str.replace(",", "").str.replace("%", ""), errors="raise")
-                df[col] = numeric
+                df[col] = pd.to_numeric(df[col].astype(str).str.replace(",", "").str.replace("%", ""), errors="raise")
                 converted.append(f"{col} -> numeric")
             except Exception:
                 pass
-        report["steps"].append({
-            "step": "Type inference",
-            "library": "Pandas",
-            "conversions": converted,
-        })
+        report["steps"].append({"step": "Type inference", "library": "Pandas", "conversions": converted})
 
-        # Step 3 — Remove duplicate rows
+        # Step 3 — Remove duplicates
         dupes_before = int(df.duplicated().sum())
         df = df.drop_duplicates()
-        report["steps"].append({
-            "step": "Duplicate removal",
-            "library": "Pandas",
-            "rows_removed": dupes_before,
-        })
+        report["steps"].append({"step": "Duplicate removal", "library": "Pandas", "rows_removed": dupes_before})
 
         # Step 4 — Impute missing values
         numeric_cols = df.select_dtypes(include="number").columns
         cat_cols = df.select_dtypes(include=["object", "category"]).columns
         imputed = {}
-
         for col in numeric_cols:
-            n_missing = int(df[col].isnull().sum())
-            if n_missing > 0:
+            n = int(df[col].isnull().sum())
+            if n > 0:
                 median_val = df[col].median()
                 df[col] = df[col].fillna(median_val)
-                imputed[col] = {"missing": n_missing, "filled_with": f"median ({median_val:.4f})"}
-
+                imputed[col] = {"missing": n, "filled_with": f"median ({median_val:.4f})"}
         for col in cat_cols:
-            n_missing = int(df[col].isnull().sum())
-            if n_missing > 0:
-                if df[col].mode().empty:
-                    df[col] = df[col].fillna("Unknown")
-                    imputed[col] = {"missing": n_missing, "filled_with": "Unknown"}
-                else:
-                    mode_val = df[col].mode()[0]
-                    df[col] = df[col].fillna(mode_val)
-                    imputed[col] = {"missing": n_missing, "filled_with": f"mode ({mode_val})"}
+            n = int(df[col].isnull().sum())
+            if n > 0:
+                mode_val = df[col].mode()[0] if not df[col].mode().empty else "Unknown"
+                df[col] = df[col].fillna(mode_val)
+                imputed[col] = {"missing": n, "filled_with": f"mode ({mode_val})"}
+        report["steps"].append({"step": "Missing value imputation", "library": "Pandas + NumPy", "columns_imputed": imputed})
 
-        report["steps"].append({
-            "step": "Missing value imputation",
-            "library": "Pandas + NumPy",
-            "columns_imputed": imputed,
-        })
-
-        # Step 5 — Winsorise outliers (cap at mean ± 3 std)
+        # Step 5 — Winsorise outliers
         winsorised = {}
         for col in df.select_dtypes(include="number").columns:
-            mean = df[col].mean()
-            std = df[col].std()
+            mean, std = df[col].mean(), df[col].std()
             if std == 0:
                 continue
-            lower = mean - 3 * std
-            upper = mean + 3 * std
+            lower, upper = mean - 3 * std, mean + 3 * std
             n_capped = int(((df[col] < lower) | (df[col] > upper)).sum())
             if n_capped > 0:
                 df[col] = df[col].clip(lower=lower, upper=upper)
                 winsorised[col] = {"capped_values": n_capped, "range": f"[{lower:.2f}, {upper:.2f}]"}
+        report["steps"].append({"step": "Outlier winsorisation", "library": "Pandas + NumPy", "columns_winsorised": winsorised})
 
-        report["steps"].append({
-            "step": "Outlier winsorisation",
-            "library": "Pandas + NumPy",
-            "columns_winsorised": winsorised,
-        })
-
-        # Step 6 — Log-transform heavily skewed columns (skewness > 1.5)
+        # Step 6 — Log-transform skewed columns
         transformed = {}
         for col in df.select_dtypes(include="number").columns:
             try:
@@ -136,31 +87,18 @@ class DataAnalysisService:
                     transformed[col] = {"skewness": round(skewness, 3), "new_column": col + "_log"}
             except Exception:
                 pass
-
-        report["steps"].append({
-            "step": "Skewness correction (log transform)",
-            "library": "NumPy + SciPy",
-            "columns_transformed": transformed,
-        })
+        report["steps"].append({"step": "Skewness correction", "library": "NumPy + SciPy", "columns_transformed": transformed})
 
         report["final_rows"] = len(df)
         report["final_cols"] = len(df.columns)
         report["rows_removed_total"] = original_shape[0] - len(df)
-
-        logger.info(
-            f"Data cleaning complete: {original_shape} -> {df.shape} | "
-            f"dupes removed: {dupes_before} | imputed: {len(imputed)} cols | "
-            f"winsorised: {len(winsorised)} cols"
-        )
-
+        logger.info(f"Cleaning complete: {original_shape} -> {df.shape}")
         return df, report
-
-    # ── DESCRIPTIVE STATISTICS ────────────────────────────────────────────────
 
     def describe(self, df: pd.DataFrame) -> dict:
         numeric = df.select_dtypes(include="number")
         categorical = df.select_dtypes(include=["object", "category"])
-        stats_out = {
+        result = {
             "shape": {"rows": len(df), "columns": len(df.columns)},
             "dtypes": df.dtypes.astype(str).to_dict(),
             "missing": df.isnull().sum().to_dict(),
@@ -169,15 +107,13 @@ class DataAnalysisService:
             "categorical_stats": {},
         }
         if not numeric.empty:
-            stats_out["numeric_stats"] = numeric.describe().round(4).to_dict()
+            result["numeric_stats"] = numeric.describe().round(4).to_dict()
         for col in categorical.columns:
-            stats_out["categorical_stats"][col] = {
+            result["categorical_stats"][col] = {
                 "unique": int(df[col].nunique()),
                 "top": str(df[col].mode()[0]) if not df[col].mode().empty else None,
             }
-        return stats_out
-
-    # ── QUALITY REPORT ────────────────────────────────────────────────────────
+        return result
 
     def quality_report(self, df: pd.DataFrame) -> dict:
         total = df.shape[0] * df.shape[1]
@@ -204,8 +140,6 @@ class DataAnalysisService:
             ),
         }
 
-    # ── ANOMALY DETECTION ─────────────────────────────────────────────────────
-
     def detect_anomalies(self, df: pd.DataFrame, column: str, method: str = "zscore") -> dict:
         series = df[column].dropna()
         if method == "zscore":
@@ -229,8 +163,6 @@ class DataAnalysisService:
             "anomaly_count": int(mask.sum()),
             "anomaly_pct": round(mask.mean() * 100, 2),
         }
-
-    # ── FORECASTING ───────────────────────────────────────────────────────────
 
     def forecast_arima(self, series: pd.Series, periods: int = 12) -> dict:
         from statsmodels.tsa.arima.model import ARIMA
@@ -265,8 +197,6 @@ class DataAnalysisService:
             "feature_importances": dict(zip(features, model.feature_importances_.round(4).tolist())),
         }
 
-    # ── CLUSTERING ────────────────────────────────────────────────────────────
-
     def cluster(self, df: pd.DataFrame, features: list, n_clusters: int = 4) -> dict:
         from sklearn.cluster import KMeans
         from sklearn.preprocessing import StandardScaler
@@ -281,18 +211,8 @@ class DataAnalysisService:
         clusters = {}
         for i in range(n_clusters):
             grp = df2[df2["_cluster"] == i][features]
-            clusters[f"cluster_{i}"] = {
-                "size": int((labels == i).sum()),
-                "means": grp.mean().round(4).to_dict(),
-            }
-        return {
-            "model": "K-Means",
-            "n_clusters": n_clusters,
-            "silhouette_score": round(float(sil), 4),
-            "clusters": clusters,
-        }
-
-    # ── HELPERS ───────────────────────────────────────────────────────────────
+            clusters[f"cluster_{i}"] = {"size": int((labels == i).sum()), "means": grp.mean().round(4).to_dict()}
+        return {"model": "K-Means", "n_clusters": n_clusters, "silhouette_score": round(float(sil), 4), "clusters": clusters}
 
     def df_to_records(self, df: pd.DataFrame, limit: int = 50) -> list:
         return json.loads(df.head(limit).to_json(orient="records"))
