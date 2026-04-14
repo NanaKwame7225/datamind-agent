@@ -1,69 +1,64 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-# =========================
-# ROUTES IMPORTS
-# =========================
+# ROUTES
 from api.audit_routes import router as audit_router
 from api.document_routes import router as document_router
 from api.integration_routes import router as integration_router
 
-# =========================
-# APP INITIALIZATION
-# =========================
+# MIDDLEWARE
+from core.tenant_middleware import TenantMiddleware
+
 app = FastAPI(
-    title="DataMind Audit AI",
-    description="AI-Powered Audit, Finance, and Tax Intelligence Platform",
-    version="2.0.0"
+    title="DataMind Audit AI Enterprise",
+    version="3.0.0",
+    description="Multi-Tenant AI Audit, Finance & Tax Intelligence Platform"
 )
 
 # =========================
-# CORS CONFIGURATION
-# (ALLOW FRONTEND CONNECTION)
+# MIDDLEWARE
 # =========================
+app.add_middleware(TenantMiddleware)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # later restrict to your frontend domain
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 # =========================
-# REGISTER ROUTES (CORE SYSTEM)
+# ROUTES
 # =========================
-
-# 🔴 AUDIT ENGINE (Fraud, Benford, Ratios, Trends, Reports)
-app.include_router(audit_router, prefix="/api/audit", tags=["Audit Engine"])
-
-# 🧾 DOCUMENT AI (OCR, Invoice validation, Receipt matching)
-app.include_router(document_router, prefix="/api/document", tags=["Document AI"])
-
-# 🔌 ENTERPRISE INTEGRATIONS (SAP, QuickBooks)
-app.include_router(integration_router, prefix="/api/integrations", tags=["Enterprise Integrations"])
+app.include_router(audit_router, prefix="/api/audit")
+app.include_router(document_router, prefix="/api/document")
+app.include_router(integration_router, prefix="/api/integrations")
 
 # =========================
-# HEALTH CHECK ENDPOINT
+# HEALTH CHECK
 # =========================
 @app.get("/health")
-def health_check():
+def health():
     return {
-        "status": "active",
-        "system": "DataMind Audit AI",
-        "version": "2.0.0"
+        "status": "running",
+        "version": "3.0.0",
+        "system": "DataMind Audit AI Enterprise"
     }
 
 # =========================
-# ROOT ENDPOINT
+# ROOT
 # =========================
 @app.get("/")
 def home():
     return {
-        "message": "DataMind Audit AI Running 🚀",
+        "message": "DataMind Audit AI Enterprise Running 🚀",
         "modules": [
-            "Audit Intelligence",
+            "Audit Engine",
+            "Fraud ML Engine",
             "Document AI",
-            "Fraud Detection ML",
-            "Enterprise Integrations"
+            "Tax Intelligence",
+            "Enterprise Integrations",
+            "Multi-Tenant SaaS"
         ]
     }
