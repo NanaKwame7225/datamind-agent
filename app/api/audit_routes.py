@@ -1,8 +1,5 @@
 from fastapi import APIRouter
 
-# =========================
-# CORE AUDIT ENGINE IMPORTS
-# =========================
 from core.advanced_audit import (
     benford_analysis,
     ratio_analysis,
@@ -10,79 +7,40 @@ from core.advanced_audit import (
 )
 
 from core.ml_fraud_engine import fraud_detector
-from core.audit_report_generator import generate_audit_report
+from core.audit_opinion_engine import generate_audit_opinion
 
-# =========================
-# ROUTER INITIALIZATION
-# =========================
 router = APIRouter()
 
-# =========================================================
-# 🧠 FRAUD DETECTION MODULE (ML-BASED)
-# =========================================================
-
+# FRAUD
 @router.post("/fraud/train")
-def train_fraud_model(data: dict):
-    """
-    Train ML fraud detection model
-    """
+def train(data: dict):
     return fraud_detector.train(data["transactions"])
 
 
 @router.post("/fraud/predict")
-def predict_fraud(data: dict):
-    """
-    Predict fraud on transaction dataset
-    """
+def predict(data: dict):
     return fraud_detector.predict(data["transactions"])
 
 
-# =========================================================
-# 📊 BENFORD'S LAW (FRAUD PATTERN DETECTION)
-# =========================================================
-
+# BENFORD
 @router.post("/benford")
-def run_benford_analysis(data: dict):
-    """
-    Detect anomalies using Benford's Law
-    """
+def benford(data: dict):
     return benford_analysis(data["data"])
 
 
-# =========================================================
-# 📈 FINANCIAL RATIO ANALYSIS
-# =========================================================
-
+# RATIOS
 @router.post("/ratios")
-def run_ratio_analysis(payload: dict):
-    """
-    Analyze financial health ratios
-    """
-    return ratio_analysis(payload["financials"])
+def ratios(data: dict):
+    return ratio_analysis(data["financials"])
 
 
-# =========================================================
-# 📉 TREND ANALYSIS (TIME SERIES AUDITING)
-# =========================================================
-
+# TREND
 @router.post("/trend")
-def run_trend_analysis(payload: dict):
-    """
-    Detect financial performance trends
-    """
-    return trend_analysis(payload["series"])
+def trend(data: dict):
+    return trend_analysis(data["series"])
 
 
-# =========================================================
-# 📄 AUDIT REPORT GENERATION (BIG 4 STYLE OUTPUT)
-# =========================================================
-
-@router.post("/report")
-def generate_report(payload: dict):
-    """
-    Generate structured audit PDF report
-    """
-    return generate_audit_report(
-        filename=payload.get("filename", "audit_report.pdf"),
-        audit_data=payload["audit_data"]
-    )
+# AUDIT OPINION
+@router.post("/opinion")
+def opinion(data: dict):
+    return generate_audit_opinion(data["findings"])
