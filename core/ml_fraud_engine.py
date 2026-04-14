@@ -1,27 +1,11 @@
-from sklearn.ensemble import IsolationForest
-import numpy as np
+from core.database import findings
 
-class FraudDetector:
-    def __init__(self):
-        self.model = IsolationForest(contamination=0.05)
+async def save_fraud_results(tenant_id, results):
+    record = {
+        "tenant_id": tenant_id,
+        "type": "FRAUD_DETECTION",
+        "results": results
+    }
 
-    def train(self, transactions):
-        X = np.array([[t["amount"]] for t in transactions])
-        self.model.fit(X)
-        return {"status": "model trained"}
-
-    def predict(self, transactions):
-        X = np.array([[t["amount"]] for t in transactions])
-        preds = self.model.predict(X)
-
-        results = []
-        for i, t in enumerate(transactions):
-            results.append({
-                "transaction": t,
-                "fraud": preds[i] == -1
-            })
-
-        return results
-
-
-fraud_detector = FraudDetector()
+    await findings.insert_one(record)
+    return record
