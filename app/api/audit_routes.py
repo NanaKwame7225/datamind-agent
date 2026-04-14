@@ -14,6 +14,17 @@ router = APIRouter()
 def benford(data: dict):
     return benford_analysis(data["data"])
 
+from core.ml_fraud_engine import fraud_detector
+
+@router.post("/fraud/train")
+def train(data: dict):
+    return fraud_detector.train(data["transactions"])
+
+
+@router.post("/fraud/predict")
+def predict(data: dict):
+    return fraud_detector.predict(data["transactions"])
+
 
 # =========================
 # RATIO ANALYSIS
