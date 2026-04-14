@@ -1,14 +1,20 @@
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
+from motor.motor_asyncio import AsyncIOMotorClient
+import os
 
-DATABASE_URL = "postgresql://user:password@localhost/datamind"
+MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017")
 
-engine = create_engine(DATABASE_URL)
-SessionLocal = sessionmaker(bind=engine)
+client = AsyncIOMotorClient(MONGO_URI)
 
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+db = client.datamind_audit_ai
+
+
+# =========================
+# COLLECTIONS
+# =========================
+tenants = db.tenants
+users = db.users
+transactions = db.transactions
+findings = db.audit_findings
+reports = db.audit_reports
+logs = db.audit_logs
+documents = db.documents
