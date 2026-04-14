@@ -1,46 +1,16 @@
-from fastapi import APIRouter
-
-from core.advanced_audit import (
-    benford_analysis,
-    ratio_analysis,
-    trend_analysis
-)
-
-from core.ml_fraud_engine import fraud_detector
-from core.audit_opinion_engine import generate_audit_opinion
-
-router = APIRouter()
-
-# FRAUD
-@router.post("/fraud/train")
-def train(data: dict):
-    return fraud_detector.train(data["transactions"])
-
+from fastapi import Request
+from core.ml_fraud_engine import fraud_detector, save_fraud_results
 
 @router.post("/fraud/predict")
-def predict(data: dict):
-    return fraud_detector.predict(data["transactions"])
+async def predict(data: dict, request: Request):
 
+    tenant_id = request.state.tenant_id
 
-# BENFORD
-@router.post("/benford")
-def benford(data: dict):
-    return benford_analysis(data["data"])
+    results = fraud_detector.predict(data["transactions"])
 
+    await save_fraud_results(tenant_id, results)
 
-# RATIOS
-@router.post("/ratios")
-def ratios(data: dict):
-    return ratio_analysis(data["financials"])
-
-
-# TREND
-@router.post("/trend")
-def trend(data: dict):
-    return trend_analysis(data["series"])
-
-
-# AUDIT OPINION
-@router.post("/opinion")
-def opinion(data: dict):
-    return generate_audit_opinion(data["findings"])
+    return {
+        "tenant": tenant_id,
+        "results": results
+    }
