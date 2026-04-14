@@ -1,9 +1,8 @@
 import datetime
 
-def log_event(tenant_id, action, status):
+def log_event(tenant, action):
     return {
-        "tenant_id": tenant_id,
+        "tenant": tenant,
         "action": action,
-        "status": status,
         "timestamp": str(datetime.datetime.utcnow())
     }
