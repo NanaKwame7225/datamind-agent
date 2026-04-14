@@ -7,28 +7,19 @@ from core.document_ai import (
 
 router = APIRouter()
 
-# =========================
-# OCR EXTRACTION
-# =========================
 @router.post("/ocr")
-def ocr(payload: dict):
-    return {"text": extract_text(payload["file"])}
+def ocr(data: dict):
+    return {"text": extract_text(data["file"])}
 
 
-# =========================
-# INVOICE VALIDATION
-# =========================
 @router.post("/invoice")
-def invoice(payload: dict):
-    return validate_invoice(payload["invoice"])
+def invoice(data: dict):
+    return validate_invoice(data["invoice"])
 
 
-# =========================
-# RECEIPT MATCHING
-# =========================
 @router.post("/match")
-def match(payload: dict):
+def match(data: dict):
     return match_receipt_to_transaction(
-        payload["receipt"],
-        payload["transactions"]
+        data["receipt"],
+        data["transactions"]
     )
