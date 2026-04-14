@@ -1,12 +1,15 @@
-FROM python:3.12-slim
+FROM node:20-alpine
 
 WORKDIR /app
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+COPY package*.json ./
 
-COPY main.py .
+RUN npm install --omit=dev
 
-EXPOSE 8000
+COPY . .
 
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+EXPOSE 5000
+
+ENV NODE_ENV=production
+
+CMD ["node", "src/server.js"]
