@@ -1,20 +1,10 @@
 def generate_audit_opinion(findings):
-    risk_count = len([f for f in findings if f["severity"] == "HIGH"])
+    high_risk = len([f for f in findings if f.get("severity") == "HIGH"])
 
-    if risk_count > 5:
-        return {
-            "opinion": "ADVERSE OPINION",
-            "reason": "High material misstatements detected"
-        }
+    if high_risk > 5:
+        return {"opinion": "ADVERSE OPINION"}
 
-    elif risk_count > 2:
-        return {
-            "opinion": "QUALIFIED OPINION",
-            "reason": "Some risks identified"
-        }
+    elif high_risk > 2:
+        return {"opinion": "QUALIFIED OPINION"}
 
-    else:
-        return {
-            "opinion": "UNQUALIFIED OPINION",
-            "reason": "Financials appear reasonable"
-        }
+    return {"opinion": "UNQUALIFIED OPINION"}
