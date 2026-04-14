@@ -1,27 +1,10 @@
-# Simulated OCR + validation system
+from core.database import documents
 
-def extract_text(file):
-    return "Extracted OCR text from document"
-
-
-def validate_invoice(invoice):
-    required = ["invoiceNumber", "amount", "date"]
-
-    missing = [f for f in required if f not in invoice]
-
-    return {
-        "valid": len(missing) == 0,
-        "missing": missing
+async def store_document(tenant_id, text):
+    doc = {
+        "tenant_id": tenant_id,
+        "text": text
     }
 
-
-def match_receipt_to_transaction(receipt, transactions):
-    matches = [
-        t for t in transactions
-        if t.get("amount") == receipt.get("amount")
-    ]
-
-    return {
-        "matched": len(matches) > 0,
-        "matches": matches
-    }
+    await documents.insert_one(doc)
+    return doc
