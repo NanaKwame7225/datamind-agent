@@ -1,10 +1,9 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-
 from api.auth_routes import router as auth_router
 from api.audit_routes import router as audit_router
 from api.report_routes import router as report_router
-
+from api.analyse_routes import router as analyse_router
 from core.database import client
 
 app = FastAPI(title="DataMind Audit AI Enterprise 3.0")
@@ -21,9 +20,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(auth_router, prefix="/api/auth")
-app.include_router(audit_router, prefix="/api/audit")
-app.include_router(report_router, prefix="/api/report")
+app.include_router(auth_router,    prefix="/api/auth")
+app.include_router(audit_router,   prefix="/api/audit")
+app.include_router(report_router,  prefix="/api/report")
+app.include_router(analyse_router, prefix="/api/v1/analysis")
 
 @app.get("/")
 def home():
@@ -39,3 +39,7 @@ def home():
             "Enterprise Ready"
         ]
     }
+
+@app.get("/health")
+def health():
+    return {"status": "healthy"}
