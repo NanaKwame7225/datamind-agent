@@ -1,16 +1,29 @@
-from fastapi import Request
-from core.ml_fraud_engine import fraud_detector, save_fraud_results
+from fastapi import APIRouter
+from pydantic import BaseModel
+from typing import Any
+from core.database import audits_col
+import datetime
 
-@router.post("/fraud/predict")
-async def predict(data: dict, request: Request):
+router = APIRouter()
 
-    tenant_id = request.state.tenant_id
+class AuditEntry(BaseModel):
+    company_id: str = "DEFAULT"
+    data: dict[str, Any] = {}
+    notes: str = ""
 
-    results = fraud_detector.predict(data["transactions"])
-
-    await save_fraud_results(tenant_id, results)
-
-    return {
-        "tenant": tenant_id,
-        "results": results
+@router.post("/submit")
+def submit_audit(entry: AuditEntry):
+    doc = {
+        "company_id":   entry.company_id,
+        "data":         entry.data,
+        "notes":        entry.notes,
+        "submitted_at": datetime.datetime.utcnow().isoformat(),
+        "status":       "pending_review",
     }
+    result = audits_col.insert_one(doc)
+    return {"status": "submitted", "audit_id": str(result.inserted_id)}
+
+@router.get("/list/{company_id}")
+def list_audits(company_id: str):
+    docs = list(audits_col.find({"company_id": company_id}, {"_id": 0}))
+    return {"company_id": company_id, "audits": docs, "count": len(docs)}
