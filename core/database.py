@@ -1,20 +1,11 @@
-from motor.motor_asyncio import AsyncIOMotorClient
 import os
+from pymongo import MongoClient
 
-MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017")
+MONGO_URI = os.environ.get("MONGO_URI", "mongodb://localhost:27017")
+client    = MongoClient(MONGO_URI)
+db        = client["datamind"]
 
-client = AsyncIOMotorClient(MONGO_URI)
-
-db = client.datamind_audit_ai
-
-
-# =========================
-# COLLECTIONS
-# =========================
-tenants = db.tenants
-users = db.users
-transactions = db.transactions
-findings = db.audit_findings
-reports = db.audit_reports
-logs = db.audit_logs
-documents = db.documents
+# Collections
+users_col   = db["users"]
+audits_col  = db["audits"]
+reports_col = db["reports"]
