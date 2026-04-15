@@ -1,20 +1,12 @@
-FROM node:20-alpine
+FROM python:3.12-slim
 
 WORKDIR /app
 
-# Copy dependency files first (important for caching)
-COPY package*.json ./
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
-# Install dependencies
-RUN npm ci --omit=dev || npm install --omit=dev
-
-# Copy full source code
 COPY . .
 
-# App port (adjust if needed)
-EXPOSE 5000
+EXPOSE 8000
 
-ENV NODE_ENV=production
-
-# Start server
-CMD ["node", "src/server.js"]
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
