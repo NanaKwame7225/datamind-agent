@@ -1,34 +1,47 @@
-from fastapi import APIRouter
-from core.security import hash_password, verify_password, create_token
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
+from core.database import users_col
+from passlib.context import CryptContext
+from jose import jwt
+import os, datetime
 
-router = APIRouter()
+router  = APIRouter()
+pwd_ctx = CryptContext(schemes=["bcrypt"], deprecated="auto")
+SECRET  = os.environ.get("JWT_SECRET", "datamind-secret-change-in-prod")
+ALGO    = "HS256"
 
-USERS = {}
+class RegisterRequest(BaseModel):
+    email: str
+    password: str
+    company: str = "DEFAULT"
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
 
 @router.post("/register")
-def register(data: dict):
-    email = data["email"]
-    password = hash_password(data["password"])
-
-    USERS[email] = {
-        "email": email,
-        "password": password,
-        "company_id": data.get("company_id", "DEFAULT")
-    }
-
-    return {"message": "User created"}
+def register(req: RegisterRequest):
+    if users_col.find_one({"email": req.email}):
+        raise HTTPException(400, "Email already registered")
+    users_col.insert_one({
+        "email":      req.email,
+        "password":   pwd_ctx.hash(req.password),
+        "company_id": req.company,
+        "created_at": datetime.datetime.utcnow().isoformat(),
+    })
+    return {"status": "registered", "email": req.email}
 
 @router.post("/login")
-def login(data: dict):
-    user = USERS.get(data["email"])
-
-    if not user or not verify_password(data["password"], user["password"]):
-        return {"error": "Invalid credentials"}
-
-    token = create_token({
-        "email": user["email"],
-        "company_id": user["company_id"],
-        "role": "admin"
-    })
-
-    return {"token": token}
+def login(req: LoginRequest):
+    user = users_col.find_one({"email": req.email})
+    if not user or not pwd_ctx.verify(req.password, user["password"]):
+        raise HTTPException(401, "Invalid credentials")
+    token = jwt.encode(
+        {
+            "sub":     req.email,
+            "company": user.get("company_id", "DEFAULT"),
+            "exp":     datetime.datetime.utcnow() + datetime.timedelta(hours=24),
+        },
+        SECRET, algorithm=ALGO,
+    )
+    return {"access_token": token, "token_type": "bearer"}
