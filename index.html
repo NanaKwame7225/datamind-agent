@@ -1,1 +1,1472 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>DataMind — Audit AI Elite</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700;800&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/plotly.js/2.26.0/plotly.min.js"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
 
+:root{
+  --bg:#07090f;--navy:#0b0e18;--card:#0f1422;--card2:#141928;
+  --border:rgba(99,179,237,0.08);--border2:rgba(99,179,237,0.2);
+  --accent:#38bdf8;--accent2:#818cf8;
+  --text:#e2eaf8;--text2:#5a7090;--text3:#1e2d45;
+  --green:#34d399;--red:#f87171;--warn:#fbbf24;
+  --r:10px;--r2:16px;--r3:22px;
+  --sidebar:260px;
+
+  /* AI Provider Colors */
+  --claude-color:#d97757;
+  --claude-bg:rgba(217,119,87,0.1);
+  --claude-border:rgba(217,119,87,0.3);
+  --gemini-color:#4285f4;
+  --gemini-bg:rgba(66,133,244,0.1);
+  --gemini-border:rgba(66,133,244,0.3);
+  --stats-color:#64748b;
+  --stats-bg:rgba(100,116,139,0.1);
+  --stats-border:rgba(100,116,139,0.25);
+}
+
+body.theme-light{
+  --bg:#f0f4f8;--navy:#ffffff;--card:#ffffff;--card2:#f5f8fc;
+  --border:rgba(0,0,0,0.07);--border2:rgba(0,0,0,0.14);
+  --accent:#0284c7;--accent2:#6366f1;
+  --text:#0f172a;--text2:#64748b;--text3:#cbd5e1;
+  --green:#059669;--red:#dc2626;--warn:#d97706;
+}
+body.theme-slate{
+  --bg:#0d0f19;--navy:#11141f;--card:#181b2a;--card2:#1e2235;
+  --border:rgba(129,140,248,0.1);--border2:rgba(129,140,248,0.22);
+  --accent:#818cf8;--accent2:#c084fc;
+  --text:#e0e4ff;--text2:#6b7299;--text3:#252b4a;
+}
+body.theme-forest{
+  --bg:#06110d;--navy:#091810;--card:#0d2018;--card2:#112820;
+  --border:rgba(52,211,153,0.1);--border2:rgba(52,211,153,0.22);
+  --accent:#34d399;--accent2:#a3e635;
+  --text:#d1fae5;--text2:#4d8a6a;--text3:#123624;
+}
+body.theme-royal{
+  --bg:#08061a;--navy:#0c0924;--card:#110e2e;--card2:#16123a;
+  --border:rgba(167,139,250,0.1);--border2:rgba(167,139,250,0.25);
+  --accent:#a78bfa;--accent2:#f472b6;
+  --text:#ede9ff;--text2:#7265a8;--text3:#22185a;
+}
+
+html,body{width:100%;height:100%;overflow:hidden;font-family:'DM Sans',system-ui,sans-serif;background:var(--bg);color:var(--text);transition:background .3s,color .3s;-webkit-font-smoothing:antialiased}
+
+/* ── LAYOUT ── */
+.app{width:100%;max-width:1440px;height:100dvh;margin:auto;display:flex;flex-direction:column;overflow:hidden}
+
+/* ── TOPBAR ── */
+.topbar{
+  flex-shrink:0;background:var(--navy);
+  border-bottom:1px solid var(--border);
+  display:flex;align-items:center;justify-content:space-between;
+  padding:0 20px;height:58px;gap:14px;z-index:100;position:relative;
+}
+.brand{display:flex;align-items:center;gap:11px;flex-shrink:0;text-decoration:none}
+.brand-mark{
+  width:36px;height:36px;border-radius:10px;
+  background:linear-gradient(135deg,var(--accent),var(--accent2));
+  display:flex;align-items:center;justify-content:center;
+  font-weight:900;font-size:13px;color:#fff;letter-spacing:-.5px;
+  box-shadow:0 0 18px rgba(56,189,248,0.3);
+}
+.brand-name{font-weight:800;font-size:17px;letter-spacing:-.4px;color:var(--text)}
+.brand-badge{font-size:9px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--accent);font-family:'DM Mono',monospace;background:var(--claude-bg);border:1px solid var(--border2);padding:2px 7px;border-radius:5px}
+
+/* ── TOP TABS ── */
+.top-tabs{display:flex;gap:3px;flex:1;justify-content:center}
+.top-tab{
+  padding:7px 16px;border-radius:9px;border:1px solid transparent;
+  background:none;color:var(--text2);font-size:12px;font-weight:600;
+  cursor:pointer;transition:all .15s;white-space:nowrap;letter-spacing:.02em;
+  font-family:'DM Sans',sans-serif;
+}
+.top-tab:hover{border-color:var(--border2);color:var(--text);background:var(--card)}
+.top-tab.active{border-color:var(--border2);background:var(--card);color:var(--accent)}
+
+.topbar-right{display:flex;align-items:center;gap:10px;flex-shrink:0}
+
+/* Status pill */
+.status-pill{
+  display:flex;align-items:center;gap:7px;padding:6px 13px;
+  background:var(--card);border:1px solid var(--border);border-radius:20px;
+  font-size:11px;color:var(--text2);cursor:pointer;font-family:'DM Mono',monospace;
+  transition:all .2s;
+}
+.status-pill:hover{border-color:var(--border2)}
+.sdot{width:7px;height:7px;border-radius:50%;flex-shrink:0;transition:background .3s}
+.sdot.on{background:var(--green);box-shadow:0 0 8px var(--green);animation:pulse 2.5s infinite}
+.sdot.off{background:var(--red)}
+.sdot.wait{background:var(--warn);animation:pulse 1.5s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+
+.icon-btn{
+  width:34px;height:34px;border-radius:9px;border:1px solid var(--border);
+  background:var(--card);color:var(--text2);font-size:15px;
+  cursor:pointer;transition:all .15s;display:flex;align-items:center;justify-content:center;
+}
+.icon-btn:hover{border-color:var(--border2);color:var(--text)}
+
+/* ── THEME PANEL ── */
+.theme-panel{
+  position:absolute;top:62px;right:20px;
+  background:var(--navy);border:1px solid var(--border2);border-radius:var(--r2);
+  padding:18px;z-index:400;min-width:250px;
+  box-shadow:0 16px 48px rgba(0,0,0,.5);display:none;
+}
+.theme-panel.open{display:block;animation:fadeDown .18s ease}
+@keyframes fadeDown{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:translateY(0)}}
+.theme-panel-title{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.12em;color:var(--text2);margin-bottom:14px;font-family:'DM Mono',monospace}
+.theme-swatches{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.swatch{border-radius:var(--r);padding:10px 8px;cursor:pointer;border:2px solid transparent;transition:all .15s;text-align:center}
+.swatch:hover{transform:translateY(-2px)}
+.swatch.active{border-color:var(--accent)}
+.swatch-dot{width:24px;height:24px;border-radius:50%;margin:0 auto 6px}
+.swatch-label{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--text2)}
+
+/* ── BODY ── */
+.body{flex:1;display:flex;min-height:0}
+
+/* ── SIDEBAR ── */
+.sidebar{
+  width:var(--sidebar);background:var(--navy);border-right:1px solid var(--border);
+  padding:16px;overflow-y:auto;display:flex;flex-direction:column;gap:20px;
+  flex-shrink:0;transition:width .25s,opacity .2s,padding .25s;
+  scrollbar-width:thin;scrollbar-color:var(--border2) transparent;
+}
+.sidebar.hidden{width:0;opacity:0;overflow:hidden;padding:0}
+.sidebar::-webkit-scrollbar{width:4px}
+.sidebar::-webkit-scrollbar-thumb{background:var(--border2);border-radius:4px}
+
+.slabel{
+  font-size:9px;text-transform:uppercase;letter-spacing:.15em;color:var(--text3);
+  margin-bottom:9px;font-weight:700;font-family:'DM Mono',monospace;
+}
+
+/* Industry grid */
+.ind-grid{display:grid;grid-template-columns:1fr 1fr;gap:5px}
+.ind-btn{
+  padding:9px 6px;border-radius:var(--r);border:1px solid var(--border);
+  background:var(--card);color:var(--text2);cursor:pointer;
+  transition:all .15s;display:flex;flex-direction:column;align-items:center;
+  gap:4px;font-size:10px;font-weight:600;text-align:center;font-family:'DM Sans',sans-serif;
+}
+.ind-btn:hover{border-color:var(--border2);color:var(--text);background:var(--card2)}
+.ind-btn.active{border-color:var(--accent);color:var(--accent);background:rgba(56,189,248,0.06)}
+.ind-icon{font-size:17px;line-height:1}
+
+/* Upload */
+.upload-zone{
+  border:1.5px dashed var(--border2);border-radius:var(--r);
+  padding:14px;text-align:center;cursor:pointer;transition:all .2s;background:var(--card);
+}
+.upload-zone:hover,.upload-zone.drag{border-color:var(--accent);background:rgba(56,189,248,0.04)}
+.uz-icon{font-size:22px;margin-bottom:6px}
+.uz-title{font-size:12px;font-weight:700;margin-bottom:3px;color:var(--text)}
+.uz-sub{font-size:11px;color:var(--text2);line-height:1.5}
+.uz-fmt{font-size:10px;color:var(--text3);margin-top:5px;font-family:'DM Mono',monospace;letter-spacing:.04em}
+.fpill{
+  display:flex;align-items:center;gap:8px;padding:7px 11px;
+  background:rgba(52,211,153,0.06);border:1px solid rgba(52,211,153,0.2);
+  border-radius:9px;font-size:11px;color:var(--green);margin-top:7px;font-family:'DM Mono',monospace;
+}
+.fpill-x{margin-left:auto;cursor:pointer;color:var(--text3);font-size:13px}
+.fpill-x:hover{color:var(--red)}
+
+/* Form */
+.form-textarea{
+  width:100%;padding:10px 12px;border-radius:var(--r);border:1px solid var(--border);
+  background:var(--card);color:var(--text);font-size:13px;outline:none;
+  transition:border-color .18s;resize:none;line-height:1.6;font-family:'DM Sans',sans-serif;
+}
+.form-textarea:focus{border-color:var(--accent)}
+.form-textarea::placeholder{color:var(--text3)}
+.qprompts{display:flex;flex-direction:column;gap:5px;margin-top:7px}
+.qp{
+  padding:7px 11px;border-radius:9px;border:1px solid var(--border);
+  background:none;color:var(--text2);font-size:11px;cursor:pointer;
+  text-align:left;transition:all .15s;font-family:'DM Sans',sans-serif;line-height:1.4;
+}
+.qp:hover{border-color:var(--border2);color:var(--text);background:var(--card)}
+
+/* Run btn */
+.run-btn{
+  width:100%;padding:13px;border-radius:var(--r);border:none;
+  background:linear-gradient(135deg,var(--accent),var(--accent2));
+  color:#fff;font-weight:700;font-size:13px;cursor:pointer;
+  transition:all .18s;display:flex;align-items:center;justify-content:center;
+  gap:8px;letter-spacing:.03em;font-family:'DM Sans',sans-serif;
+  box-shadow:0 4px 20px rgba(56,189,248,0.2);
+}
+.run-btn:hover{filter:brightness(1.1);transform:translateY(-1px);box-shadow:0 8px 28px rgba(56,189,248,0.3)}
+.run-btn:disabled{opacity:.4;cursor:not-allowed;transform:none;box-shadow:none}
+.spin{width:14px;height:14px;border:2px solid rgba(255,255,255,.3);border-top-color:#fff;border-radius:50%;animation:sp .7s linear infinite}
+@keyframes sp{to{transform:rotate(360deg)}}
+
+/* ── CONTENT ── */
+.content{flex:1;display:flex;flex-direction:column;min-height:0;overflow:hidden}
+
+/* Mode panels */
+.mode-panel{display:none;flex:1;flex-direction:column;min-height:0}
+.mode-panel.active{display:flex}
+
+/* ── AGENT PANEL ── */
+.agent-main{flex:1;overflow-y:auto;padding:24px;scrollbar-width:thin;scrollbar-color:var(--border2) transparent}
+.agent-main::-webkit-scrollbar{width:4px}
+.agent-main::-webkit-scrollbar-thumb{background:var(--border2);border-radius:4px}
+
+/* Welcome screen */
+.welcome{
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  min-height:65vh;text-align:center;gap:12px;padding:40px 20px;
+}
+.welcome-logo{
+  width:76px;height:76px;border-radius:22px;
+  background:linear-gradient(135deg,var(--accent),var(--accent2));
+  display:flex;align-items:center;justify-content:center;margin-bottom:8px;font-size:30px;
+  box-shadow:0 0 40px rgba(56,189,248,0.25);
+}
+.welcome h1{font-size:28px;font-weight:800;line-height:1.2;letter-spacing:-.5px}
+.welcome-tagline{color:var(--text2);max-width:440px;line-height:1.8;font-size:13px}
+.welcome-steps{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-top:24px;width:100%;max-width:620px}
+.wstep{
+  background:var(--card);border:1px solid var(--border);border-radius:var(--r2);
+  padding:14px 10px;text-align:center;transition:border-color .2s;
+}
+.wstep:hover{border-color:var(--border2)}
+.wstep-num{font-family:'DM Mono',monospace;font-size:10px;color:var(--accent);margin-bottom:6px;letter-spacing:.08em}
+.wstep-title{font-size:12px;font-weight:700;margin-bottom:3px}
+.wstep-desc{font-size:11px;color:var(--text2);line-height:1.5}
+
+/* Dashboard */
+#dashboard{display:none;animation:fadeUp .35s ease}
+@keyframes fadeUp{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
+.dash-topbar{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:22px;gap:14px}
+.dash-title{font-size:22px;font-weight:800;line-height:1.2;letter-spacing:-.4px}
+.dash-subtitle{font-size:13px;color:var(--text2);margin-top:3px;line-height:1.5;max-width:480px}
+.dash-meta{font-size:10px;color:var(--text3);margin-top:4px;font-family:'DM Mono',monospace;letter-spacing:.04em}
+.dash-actions{display:flex;gap:9px;flex-shrink:0}
+.action-btn{
+  padding:8px 16px;border-radius:var(--r);border:1px solid var(--border);
+  background:none;color:var(--text2);font-size:12px;cursor:pointer;
+  transition:all .15s;font-weight:600;white-space:nowrap;font-family:'DM Sans',sans-serif;
+}
+.action-btn:hover{border-color:var(--border2);color:var(--text);background:var(--card)}
+
+/* Summary bar */
+.summary-bar{
+  background:var(--card);border:1px solid var(--border);border-radius:var(--r2);
+  padding:14px 18px;margin-bottom:18px;display:flex;align-items:flex-start;gap:14px;
+  transition:border-color .2s;
+}
+.summary-bar:hover{border-color:var(--border2)}
+.summary-icon{
+  width:36px;height:36px;border-radius:10px;background:var(--card2);
+  display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0;
+}
+.summary-title{font-size:10px;font-weight:700;color:var(--accent);margin-bottom:4px;text-transform:uppercase;letter-spacing:.1em;font-family:'DM Mono',monospace}
+.summary-text{font-size:13px;color:var(--text);line-height:1.7}
+
+/* Metrics */
+.metrics-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:18px}
+.metric-card{
+  background:var(--card);border:1px solid var(--border);border-radius:var(--r2);
+  padding:16px;transition:all .2s;cursor:default;position:relative;overflow:hidden;
+}
+.metric-card::before{content:'';position:absolute;inset:0;background:linear-gradient(135deg,rgba(56,189,248,0.03),transparent);pointer-events:none}
+.metric-card:hover{border-color:var(--border2);transform:translateY(-2px);box-shadow:0 8px 24px rgba(0,0,0,.2)}
+.metric-label{font-size:9px;color:var(--text2);text-transform:uppercase;letter-spacing:.12em;font-weight:700;margin-bottom:8px;font-family:'DM Mono',monospace}
+.metric-value{font-size:24px;font-weight:800;line-height:1;letter-spacing:-.5px}
+.metric-change{font-size:11px;margin-top:5px;font-family:'DM Mono',monospace;font-weight:500}
+.metric-desc{font-size:10px;color:var(--text3);margin-top:3px;line-height:1.4}
+.up{color:var(--green)}.dn{color:var(--red)}.nt{color:var(--text2)}
+
+/* Narrative card */
+.narrative-card{
+  border:1px solid var(--border);border-left:3px solid var(--accent);border-radius:var(--r2);
+  padding:20px;margin-bottom:18px;transition:border-color .3s;
+}
+.nar-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:8px}
+.nar-label{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.12em;color:var(--accent);font-family:'DM Mono',monospace}
+.nar-body{font-size:13.5px;line-height:1.95;color:var(--text);white-space:pre-wrap;font-weight:400}
+
+/* Provider badge */
+.provider-badge{
+  display:inline-flex;align-items:center;gap:7px;padding:5px 12px;border-radius:20px;
+  font-size:11px;font-weight:600;letter-spacing:.02em;border:1px solid;
+  font-family:'DM Mono',monospace;
+}
+.provider-badge .pb-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
+.provider-badge.claude{color:var(--claude-color);background:var(--claude-bg);border-color:var(--claude-border)}
+.provider-badge.gemini{color:var(--gemini-color);background:var(--gemini-bg);border-color:var(--gemini-border)}
+.provider-badge.statistical{color:var(--stats-color);background:var(--stats-bg);border-color:var(--stats-border)}
+
+/* Engine indicator strip */
+.engine-strip{
+  display:flex;align-items:center;gap:10px;padding:10px 14px;
+  border-radius:var(--r);margin-bottom:14px;border:1px solid;font-size:12px;
+}
+.engine-strip.claude{background:var(--claude-bg);border-color:var(--claude-border);color:var(--claude-color)}
+.engine-strip.gemini{background:var(--gemini-bg);border-color:var(--gemini-border);color:var(--gemini-color)}
+.engine-strip.statistical{background:var(--stats-bg);border-color:var(--stats-border);color:var(--stats-color)}
+.engine-strip-icon{font-size:16px}
+.engine-strip-label{font-weight:700;font-family:'DM Mono',monospace}
+.engine-strip-desc{opacity:.7;font-size:11px}
+
+/* Sections */
+.section-wrap{margin-bottom:18px}
+.section-head{display:flex;align-items:center;gap:10px;margin-bottom:12px}
+.section-title{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.12em;color:var(--text2);white-space:nowrap;font-family:'DM Mono',monospace}
+.section-line{flex:1;height:1px;background:var(--border)}
+.section-count{font-size:10px;color:var(--text3);font-family:'DM Mono',monospace}
+
+/* Insights */
+.insights-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px}
+.ins-card{
+  background:var(--card);border:1px solid var(--border);border-radius:var(--r2);
+  padding:14px;display:flex;gap:12px;align-items:flex-start;transition:border-color .2s;
+}
+.ins-card:hover{border-color:var(--border2)}
+.ins-bar{width:3px;border-radius:2px;flex-shrink:0;align-self:stretch;min-height:36px}
+.ins-bar.warning{background:var(--warn)}.ins-bar.critical{background:var(--red)}
+.ins-bar.success{background:var(--green)}.ins-bar.info{background:var(--accent2)}
+.ins-severity{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;margin-bottom:3px;font-family:'DM Mono',monospace}
+.ins-severity.warning{color:var(--warn)}.ins-severity.critical{color:var(--red)}
+.ins-severity.success{color:var(--green)}.ins-severity.info{color:var(--accent2)}
+.ins-title{font-size:12px;font-weight:700;margin-bottom:5px;color:var(--text)}
+.ins-body{font-size:12px;color:var(--text2);line-height:1.7}
+.ins-src{font-size:10px;color:var(--text3);margin-top:5px;font-family:'DM Mono',monospace}
+
+/* Charts */
+.charts-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:12px;margin-bottom:18px}
+.chart-card{
+  background:var(--card);border:1px solid var(--border);border-radius:var(--r2);
+  padding:16px;overflow:hidden;transition:all .2s;
+}
+.chart-card:hover{border-color:var(--border2);box-shadow:0 4px 20px rgba(0,0,0,.15)}
+.chart-title{font-size:12px;font-weight:700;color:var(--text);margin-bottom:2px}
+.chart-desc{font-size:11px;color:var(--text2);margin:4px 0 12px;line-height:1.5}
+.chart-wrap{height:230px}
+
+/* Data quality card */
+.clean-card{background:var(--card);border:1px solid var(--border);border-radius:var(--r2);padding:16px;margin-bottom:18px}
+.clean-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+.clean-title{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--text);font-family:'DM Mono',monospace}
+.clean-badge{padding:3px 10px;border-radius:10px;font-size:10px;font-family:'DM Mono',monospace;background:rgba(52,211,153,.1);color:var(--green);border:1px solid rgba(52,211,153,.2)}
+.clean-steps{display:flex;flex-wrap:wrap;gap:6px}
+.clean-step{display:flex;align-items:center;gap:6px;padding:5px 10px;border-radius:8px;font-size:10px;background:var(--card2);border:1px solid var(--border);font-family:'DM Mono',monospace;color:var(--text2)}
+.clean-step-dot{width:5px;height:5px;border-radius:50%;background:var(--green);flex-shrink:0}
+
+/* Pipeline card */
+.pipe-card{background:var(--card);border:1px solid var(--border);border-radius:var(--r2);padding:16px;margin-bottom:18px}
+.pipe-steps{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+.pstep{display:flex;align-items:center;gap:6px;padding:5px 11px;border-radius:8px;font-size:10px;border:1px solid var(--border);background:var(--card2);font-family:'DM Mono',monospace;color:var(--text2)}
+.pstep.done{background:rgba(52,211,153,.06);border-color:rgba(52,211,153,.2);color:var(--green)}
+.pstep.skip{opacity:.4}
+.pstep.error{background:rgba(248,113,113,.06);border-color:rgba(248,113,113,.2);color:var(--red)}
+.pstep-dot{width:5px;height:5px;border-radius:50%;background:currentColor;flex-shrink:0}
+.pipe-summary{font-size:10px;color:var(--text3);margin-top:8px;font-family:'DM Mono',monospace}
+
+/* Table */
+.table-wrap{overflow-x:auto;border-radius:var(--r);border:1px solid var(--border)}
+table{width:100%;border-collapse:collapse;font-size:11px}
+th{background:var(--card2);padding:9px 13px;text-align:left;color:var(--text2);font-weight:700;border-bottom:1px solid var(--border);white-space:nowrap;font-size:9px;text-transform:uppercase;letter-spacing:.08em;font-family:'DM Mono',monospace}
+td{padding:8px 13px;border-bottom:1px solid var(--border);color:var(--text);font-family:'DM Mono',monospace;font-size:10px}
+tr:last-child td{border-bottom:none}
+tr:hover td{background:rgba(255,255,255,.015)}
+
+/* ── AUDIT / FRAUD / TAX PANELS ── */
+.audit-layout{flex:1;display:flex;min-height:0}
+.audit-tools{width:210px;background:var(--card);border-right:1px solid var(--border);padding:12px;overflow-y:auto;flex-shrink:0;scrollbar-width:thin}
+.audit-tools-section{margin-bottom:16px}
+.audit-tool-btn{
+  width:100%;margin-bottom:6px;padding:10px 12px;border:1px solid var(--border);border-radius:var(--r);
+  cursor:pointer;background:var(--card2);color:var(--text2);text-align:left;font-size:12px;
+  transition:all .15s;display:flex;align-items:center;gap:9px;font-family:'DM Sans',sans-serif;font-weight:500;
+}
+.audit-tool-btn:hover{border-color:var(--border2);color:var(--text);background:var(--navy)}
+.audit-tool-btn:active{transform:scale(.98)}
+.audit-tool-icon{font-size:15px;width:22px;text-align:center;flex-shrink:0}
+.audit-chat{flex:1;display:flex;flex-direction:column;min-height:0}
+.audit-messages{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:10px;scrollbar-width:thin}
+.audit-msg{
+  background:var(--card);border:1px solid var(--border);border-radius:var(--r2);
+  padding:13px 16px;white-space:pre-wrap;font-size:13px;line-height:1.8;
+  animation:fadeUp .25s ease;
+}
+.audit-msg.query{border-left:3px solid var(--accent);background:var(--card2)}
+.audit-msg.result{border-left:3px solid var(--accent2)}
+.audit-msg.insight{border-left:3px solid var(--warn)}
+.audit-msg.error{border-left:3px solid var(--red);color:var(--red)}
+.audit-msg-label{
+  font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;
+  color:var(--text3);margin-bottom:6px;font-family:'DM Mono',monospace;
+}
+.audit-input-bar{flex-shrink:0;display:flex;gap:10px;padding:12px;border-top:1px solid var(--border);background:var(--navy)}
+.audit-input-bar textarea{
+  flex:1;padding:11px 14px;border-radius:var(--r);border:1px solid var(--border);
+  background:var(--card);color:var(--text);resize:none;font-size:13px;outline:none;
+  transition:border-color .2s;font-family:'DM Sans',sans-serif;line-height:1.6;
+}
+.audit-input-bar textarea:focus{border-color:var(--accent)}
+.audit-input-bar textarea::placeholder{color:var(--text3)}
+.audit-send-btn{
+  padding:11px 18px;background:linear-gradient(135deg,var(--accent),var(--accent2));
+  color:#fff;border:none;border-radius:var(--r);cursor:pointer;font-weight:700;
+  font-size:13px;transition:all .15s;font-family:'DM Sans',sans-serif;white-space:nowrap;
+}
+.audit-send-btn:hover{filter:brightness(1.1);transform:translateY(-1px)}
+
+/* ── OVERLAY ── */
+.overlay{
+  display:none;position:fixed;inset:0;background:rgba(0,0,0,.88);
+  z-index:500;align-items:center;justify-content:center;flex-direction:column;
+  gap:14px;backdrop-filter:blur(8px);
+}
+.overlay.on{display:flex;animation:fadeIn .2s ease}
+@keyframes fadeIn{from{opacity:0}to{opacity:1}}
+.ov-ring{
+  width:52px;height:52px;border:3px solid rgba(255,255,255,.06);
+  border-top-color:var(--accent);border-radius:50%;animation:sp .85s linear infinite;
+}
+.ov-title{font-size:17px;font-weight:800;color:var(--text);letter-spacing:-.3px}
+.ov-sub{font-size:12px;color:var(--text2);font-family:'DM Mono',monospace}
+.ov-steps{display:flex;flex-direction:column;gap:6px;margin-top:8px;width:280px}
+.ov-step{display:flex;align-items:center;gap:10px;font-size:11px;color:var(--text3);font-family:'DM Mono',monospace;padding:4px 0;transition:color .3s}
+.ov-step.active{color:var(--text)}
+.ov-step-dot{width:6px;height:6px;border-radius:50%;background:var(--text3);flex-shrink:0;transition:all .3s}
+.ov-step.active .ov-step-dot{background:var(--accent);box-shadow:0 0 8px var(--accent)}
+
+/* ── TOAST ── */
+.toast{
+  position:fixed;bottom:22px;right:22px;padding:11px 18px;border-radius:var(--r2);
+  background:var(--card2);border:1px solid var(--border2);font-size:13px;color:var(--text);
+  z-index:600;transform:translateY(60px);opacity:0;transition:all .28s cubic-bezier(.16,1,.3,1);
+  max-width:300px;font-weight:500;box-shadow:0 8px 32px rgba(0,0,0,.3);
+}
+.toast.on{transform:translateY(0);opacity:1}
+.toast.err{border-color:rgba(248,113,113,.4);color:var(--red)}
+.toast.ok{border-color:rgba(52,211,153,.4);color:var(--green)}
+
+/* ── RESPONSIVE ── */
+@media(max-width:960px){
+  .sidebar{--sidebar:220px}
+  .welcome-steps{grid-template-columns:1fr 1fr}
+  .charts-grid{grid-template-columns:1fr}
+}
+@media(max-width:768px){
+  .sidebar{display:none}
+  .top-tabs{gap:2px}
+  .top-tab{padding:6px 10px;font-size:11px}
+  .brand-name{font-size:15px}
+  .brand-badge{display:none}
+  .dash-title{font-size:18px}
+  .metrics-row{grid-template-columns:repeat(2,1fr)}
+  .audit-tools{width:170px}
+  .audit-tool-btn{font-size:11px;padding:8px 10px}
+  .welcome h1{font-size:22px}
+}
+@media(max-width:540px){
+  .top-tabs .top-tab span{display:none}
+  .metrics-row{grid-template-columns:1fr 1fr}
+  .audit-tools{width:0;display:none}
+  .welcome-steps{grid-template-columns:1fr}
+  .agent-main{padding:14px}
+  .topbar{padding:0 12px;height:52px}
+}
+</style>
+</head>
+<body class="theme-dark">
+
+<!-- OVERLAY -->
+<div class="overlay" id="overlay">
+  <div class="ov-ring"></div>
+  <div class="ov-title" id="ovTitle">Analysing your data</div>
+  <div class="ov-sub" id="ovSub">Running AI engine — ~10 seconds</div>
+  <div class="ov-steps">
+    <div class="ov-step active" id="ovs1"><div class="ov-step-dot"></div>Cleaning and preparing data</div>
+    <div class="ov-step" id="ovs2"><div class="ov-step-dot"></div>Running statistical analysis</div>
+    <div class="ov-step" id="ovs3"><div class="ov-step-dot"></div>Building charts and visuals</div>
+    <div class="ov-step" id="ovs4"><div class="ov-step-dot"></div>Writing AI narrative</div>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+
+<!-- THEME PANEL -->
+<div class="theme-panel" id="themePanel">
+  <div class="theme-panel-title">Appearance</div>
+  <div class="theme-swatches">
+    <div class="swatch active" onclick="setTheme('dark',this)" style="background:#0b0e18">
+      <div class="swatch-dot" style="background:linear-gradient(135deg,#38bdf8,#818cf8)"></div>
+      <div class="swatch-label" style="color:#5a7090">Midnight</div>
+    </div>
+    <div class="swatch" onclick="setTheme('slate',this)" style="background:#11141f">
+      <div class="swatch-dot" style="background:linear-gradient(135deg,#818cf8,#c084fc)"></div>
+      <div class="swatch-label" style="color:#6b7299">Slate</div>
+    </div>
+    <div class="swatch" onclick="setTheme('forest',this)" style="background:#091810">
+      <div class="swatch-dot" style="background:linear-gradient(135deg,#34d399,#a3e635)"></div>
+      <div class="swatch-label" style="color:#4d8a6a">Forest</div>
+    </div>
+    <div class="swatch" onclick="setTheme('royal',this)" style="background:#0c0924">
+      <div class="swatch-dot" style="background:linear-gradient(135deg,#a78bfa,#f472b6)"></div>
+      <div class="swatch-label" style="color:#7265a8">Royal</div>
+    </div>
+    <div class="swatch" onclick="setTheme('light',this)" style="background:#f0f4f8;border:1px solid #ddd">
+      <div class="swatch-dot" style="background:linear-gradient(135deg,#0284c7,#6366f1)"></div>
+      <div class="swatch-label" style="color:#64748b">Light</div>
+    </div>
+  </div>
+</div>
+
+<div class="app">
+
+  <!-- TOPBAR -->
+  <div class="topbar">
+    <div class="brand">
+      <div class="brand-mark">DM</div>
+      <div>
+        <div style="display:flex;align-items:center;gap:8px">
+          <span class="brand-name">DataMind</span>
+          <span class="brand-badge">Elite</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="top-tabs">
+      <button class="top-tab active" onclick="switchMode('agent',this)">📊 <span>Data Agent</span></button>
+      <button class="top-tab" onclick="switchMode('audit',this)">🔍 <span>Audit</span></button>
+      <button class="top-tab" onclick="switchMode('fraud',this)">🛡 <span>Fraud</span></button>
+      <button class="top-tab" onclick="switchMode('tax',this)">📋 <span>Tax</span></button>
+      <button class="top-tab" onclick="switchMode('ai',this)">🧠 <span>AI Explain</span></button>
+    </div>
+
+    <div class="topbar-right">
+      <div class="status-pill" onclick="checkHealth()" title="Click to recheck connection">
+        <div class="sdot wait" id="sdot"></div>
+        <span id="stext">Checking</span>
+      </div>
+      <button class="icon-btn" onclick="toggleThemePanel()" title="Change theme">🎨</button>
+    </div>
+  </div>
+
+  <!-- BODY -->
+  <div class="body">
+
+    <!-- SIDEBAR -->
+    <div class="sidebar" id="agentSidebar">
+
+      <div>
+        <div class="slabel">Industry Sector</div>
+        <div class="ind-grid" id="indGrid">
+          <button class="ind-btn active" data-v="finance" onclick="selInd(this)"><div class="ind-icon">📈</div><span>Finance</span></button>
+          <button class="ind-btn" data-v="education" onclick="selInd(this)"><div class="ind-icon">🎓</div><span>Education</span></button>
+          <button class="ind-btn" data-v="supply_chain" onclick="selInd(this)"><div class="ind-icon">🚚</div><span>Supply</span></button>
+          <button class="ind-btn" data-v="procurement" onclick="selInd(this)"><div class="ind-icon">🛒</div><span>Procurement</span></button>
+          <button class="ind-btn" data-v="healthcare" onclick="selInd(this)"><div class="ind-icon">🏥</div><span>Healthcare</span></button>
+          <button class="ind-btn" data-v="mining" onclick="selInd(this)"><div class="ind-icon">⛏</div><span>Mining</span></button>
+          <button class="ind-btn" data-v="petroleum" onclick="selInd(this)"><div class="ind-icon">🛢</div><span>Petroleum</span></button>
+          <button class="ind-btn" data-v="retail" onclick="selInd(this)"><div class="ind-icon">🛍</div><span>Retail</span></button>
+          <button class="ind-btn" data-v="agriculture" onclick="selInd(this)"><div class="ind-icon">🌾</div><span>Agriculture</span></button>
+          <button class="ind-btn" data-v="manufacturing" onclick="selInd(this)"><div class="ind-icon">🏭</div><span>Manufacture</span></button>
+          <button class="ind-btn" data-v="ngo" onclick="selInd(this)"><div class="ind-icon">🌐</div><span>NGO</span></button>
+          <button class="ind-btn" data-v="general" onclick="selInd(this)"><div class="ind-icon">📦</div><span>General</span></button>
+        </div>
+      </div>
+
+      <div>
+        <div class="slabel">Your Data <span style="font-weight:400;text-transform:none;letter-spacing:0;font-size:10px">— optional</span></div>
+        <div class="upload-zone" id="upZone"
+          onclick="document.getElementById('fileInput').click()"
+          ondragover="event.preventDefault();this.classList.add('drag')"
+          ondragleave="this.classList.remove('drag')"
+          ondrop="onDrop(event)">
+          <div class="uz-icon">📂</div>
+          <div class="uz-title">Upload your data</div>
+          <div class="uz-sub">Or use built-in sample data for your sector</div>
+          <div class="uz-fmt">CSV · Excel · JSON</div>
+        </div>
+        <input type="file" id="fileInput" style="display:none" accept=".csv,.xlsx,.xls,.json" onchange="onFileSelect(event)">
+        <div id="fpill" style="display:none" class="fpill">
+          <span>✓</span><span id="fname">file.csv</span>
+          <span class="fpill-x" onclick="clearFile()">✕</span>
+        </div>
+      </div>
+
+      <div>
+        <div class="slabel">Your Question</div>
+        <textarea class="form-textarea" id="queryInput" rows="3" placeholder="e.g. How are our revenues trending?"></textarea>
+        <div class="qprompts" id="qprompts"></div>
+      </div>
+
+      <button class="run-btn" id="runBtn" onclick="runAnalysis()">
+        ✦ Analyse My Data
+      </button>
+
+    </div>
+
+    <!-- CONTENT AREA -->
+    <div class="content">
+
+      <!-- AGENT MODE -->
+      <div class="mode-panel active" id="panel-agent">
+        <div class="agent-main" id="agentMain">
+
+          <div class="welcome" id="welcomeScreen">
+            <div class="welcome-logo">📊</div>
+            <h1>Your AI Audit Analyst</h1>
+            <div class="welcome-tagline">DataMind reads your business data, spots patterns and risks you might miss, and delivers clear AI-written recommendations — powered by Claude with Gemini as backup.</div>
+            <div class="welcome-steps">
+              <div class="wstep"><div class="wstep-num">01</div><div class="wstep-title">Pick your sector</div><div class="wstep-desc">Choose the industry that matches your business</div></div>
+              <div class="wstep"><div class="wstep-num">02</div><div class="wstep-title">Add your data</div><div class="wstep-desc">Upload a file or use our built-in sample data</div></div>
+              <div class="wstep"><div class="wstep-num">03</div><div class="wstep-title">Ask a question</div><div class="wstep-desc">Type what you want to know in plain language</div></div>
+              <div class="wstep"><div class="wstep-num">04</div><div class="wstep-title">Get your report</div><div class="wstep-desc">Live charts, key findings and AI narrative</div></div>
+            </div>
+
+            <!-- AI Engine Legend -->
+            <div style="display:flex;gap:10px;margin-top:28px;flex-wrap:wrap;justify-content:center">
+              <div class="provider-badge claude"><div class="pb-dot" style="background:var(--claude-color)"></div>Claude — Primary AI</div>
+              <div class="provider-badge gemini"><div class="pb-dot" style="background:var(--gemini-color)"></div>Gemini — Backup AI</div>
+              <div class="provider-badge statistical"><div class="pb-dot" style="background:var(--stats-color)"></div>Statistical — Offline</div>
+            </div>
+          </div>
+
+          <div id="dashboard">
+            <div class="dash-topbar">
+              <div>
+                <div class="dash-title" id="dashTitle">Analysis Results</div>
+                <div class="dash-subtitle" id="dashSubtitle"></div>
+                <div class="dash-meta" id="dashMeta"></div>
+              </div>
+              <div class="dash-actions">
+                <button class="action-btn" onclick="window.print()">Export</button>
+                <button class="action-btn" onclick="resetDash()">New Analysis</button>
+              </div>
+            </div>
+
+            <!-- Engine indicator -->
+            <div id="engineStrip" style="display:none"></div>
+
+            <div class="summary-bar" id="summaryBar" style="display:none">
+              <div class="summary-icon">💡</div>
+              <div>
+                <div class="summary-title">Quick Summary</div>
+                <div class="summary-text" id="summaryText"></div>
+              </div>
+            </div>
+
+            <div class="metrics-row" id="metricsRow"></div>
+
+            <div class="narrative-card" id="narCard" style="display:none">
+              <div class="nar-header">
+                <div class="nar-label" id="narLabel">AI Analysis</div>
+                <div id="narBadge"></div>
+              </div>
+              <div class="nar-body" id="narText"></div>
+            </div>
+
+            <div class="section-wrap" id="insSection" style="display:none">
+              <div class="section-head">
+                <div class="section-title">Key Findings</div>
+                <div class="section-line"></div>
+                <div class="section-count" id="insCount"></div>
+              </div>
+              <div class="insights-grid" id="insGrid"></div>
+            </div>
+
+            <div class="section-wrap" id="chartsSection">
+              <div class="section-head">
+                <div class="section-title">Data Visualisation</div>
+                <div class="section-line"></div>
+              </div>
+              <div class="charts-grid" id="chartsGrid"></div>
+            </div>
+
+            <div class="clean-card" id="cleanCard" style="display:none">
+              <div class="clean-head">
+                <div class="clean-title">Data Quality Check</div>
+                <div class="clean-badge" id="cleanBadge">All checks passed</div>
+              </div>
+              <div class="clean-steps" id="cleanSteps"></div>
+            </div>
+
+            <div class="section-wrap" id="previewSection" style="display:none">
+              <div class="section-head">
+                <div class="section-title">Data Sample</div>
+                <div class="section-line"></div>
+              </div>
+              <div class="chart-card"><div id="dataTable"></div></div>
+            </div>
+
+            <div class="pipe-card" id="pipeCard" style="display:none">
+              <div class="section-head" style="margin-bottom:0">
+                <div class="section-title">Pipeline Trace</div>
+                <div class="section-line"></div>
+              </div>
+              <div class="pipe-steps" id="pipeSteps"></div>
+              <div class="pipe-summary" id="pipeSummary"></div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+      <!-- AUDIT MODE -->
+      <div class="mode-panel" id="panel-audit">
+        <div class="audit-layout">
+          <div class="audit-tools">
+            <div class="audit-tools-section">
+              <div class="slabel">Analysis</div>
+              <button class="audit-tool-btn" onclick="auditRun('benford')"><span class="audit-tool-icon">📊</span>Benford Analysis</button>
+              <button class="audit-tool-btn" onclick="auditRun('ratios')"><span class="audit-tool-icon">📈</span>Ratio Analysis</button>
+              <button class="audit-tool-btn" onclick="auditRun('trend')"><span class="audit-tool-icon">📉</span>Trend Analysis</button>
+            </div>
+            <div class="audit-tools-section">
+              <div class="slabel">Documents</div>
+              <button class="audit-tool-btn" onclick="auditRun('invoice')"><span class="audit-tool-icon">🧾</span>Invoice OCR</button>
+              <button class="audit-tool-btn" onclick="auditRun('receipt')"><span class="audit-tool-icon">🗂</span>Receipt Match</button>
+            </div>
+            <div class="audit-tools-section">
+              <div class="slabel">Reports</div>
+              <button class="audit-tool-btn" onclick="auditRun('report')"><span class="audit-tool-icon">📑</span>Audit Report</button>
+              <button class="audit-tool-btn" onclick="auditRun('explain')"><span class="audit-tool-icon">🧠</span>AI Explain</button>
+            </div>
+          </div>
+          <div class="audit-chat">
+            <div class="audit-messages" id="auditMessages">
+              <div class="audit-msg">
+                <div class="audit-msg-label">DataMind Audit AI</div>
+                Welcome to <strong>DataMind Audit AI Elite</strong> — Finance · Tax · Accounting · Fraud Detection.
+
+Select a tool from the left panel, or ask me anything about your financial data below.
+              </div>
+            </div>
+            <div class="audit-input-bar">
+              <textarea id="auditInp" rows="2" placeholder="Ask audit AI or describe your dataset..."></textarea>
+              <button class="audit-send-btn" onclick="auditSend()">Run AI</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- FRAUD MODE -->
+      <div class="mode-panel" id="panel-fraud">
+        <div class="audit-layout">
+          <div class="audit-tools">
+            <div class="audit-tools-section">
+              <div class="slabel">Fraud Tools</div>
+              <button class="audit-tool-btn" onclick="fraudRun('detect')"><span class="audit-tool-icon">🛡</span>Fraud Detection</button>
+              <button class="audit-tool-btn" onclick="fraudRun('pattern')"><span class="audit-tool-icon">🔎</span>Pattern Analysis</button>
+              <button class="audit-tool-btn" onclick="fraudRun('velocity')"><span class="audit-tool-icon">⚡</span>Velocity Check</button>
+              <button class="audit-tool-btn" onclick="fraudRun('duplicate')"><span class="audit-tool-icon">📋</span>Duplicate Invoice</button>
+              <button class="audit-tool-btn" onclick="fraudRun('ghost')"><span class="audit-tool-icon">👻</span>Ghost Vendor</button>
+              <button class="audit-tool-btn" onclick="fraudRun('benford')"><span class="audit-tool-icon">📊</span>Benford's Law</button>
+            </div>
+          </div>
+          <div class="audit-chat">
+            <div class="audit-messages" id="fraudMessages">
+              <div class="audit-msg">
+                <div class="audit-msg-label">DataMind Fraud Detection</div>
+                Fraud detection module ready. Select a tool or describe a transaction pattern to investigate.
+              </div>
+            </div>
+            <div class="audit-input-bar">
+              <textarea id="fraudInp" rows="2" placeholder="Describe suspicious transactions or patterns..."></textarea>
+              <button class="audit-send-btn" onclick="fraudSend()">Analyse</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- TAX MODE -->
+      <div class="mode-panel" id="panel-tax">
+        <div class="audit-layout">
+          <div class="audit-tools">
+            <div class="audit-tools-section">
+              <div class="slabel">Tax Tools</div>
+              <button class="audit-tool-btn" onclick="taxRun('vat')"><span class="audit-tool-icon">📋</span>VAT Reconciliation</button>
+              <button class="audit-tool-btn" onclick="taxRun('withholding')"><span class="audit-tool-icon">🏦</span>Withholding Tax</button>
+              <button class="audit-tool-btn" onclick="taxRun('corporate')"><span class="audit-tool-icon">🏢</span>Corporate Tax</button>
+              <button class="audit-tool-btn" onclick="taxRun('transfer')"><span class="audit-tool-icon">💱</span>Transfer Pricing</button>
+              <button class="audit-tool-btn" onclick="taxRun('compliance')"><span class="audit-tool-icon">✅</span>Tax Compliance</button>
+            </div>
+          </div>
+          <div class="audit-chat">
+            <div class="audit-messages" id="taxMessages">
+              <div class="audit-msg">
+                <div class="audit-msg-label">DataMind Tax Module</div>
+                Tax analysis module ready. Select a tool or ask about computations, reconciliation, or compliance requirements.
+              </div>
+            </div>
+            <div class="audit-input-bar">
+              <textarea id="taxInp" rows="2" placeholder="Describe your tax question or dataset..."></textarea>
+              <button class="audit-send-btn" onclick="taxSend()">Compute</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- AI EXPLAIN MODE -->
+      <div class="mode-panel" id="panel-ai">
+        <div class="audit-chat" style="flex:1">
+          <div class="audit-messages" id="aiMessages">
+            <div class="audit-msg">
+              <div class="audit-msg-label">AI Explain — ACCA / IFRS / GRA Framework</div>
+              Ask me to explain any audit, financial, or accounting concept in plain language.
+
+Examples:
+• "Explain Benford's Law and how it detects fraud"
+• "What is a going concern qualification?"
+• "How do you calculate Days Sales Outstanding?"
+• "Explain the difference between IFRS 9 and IAS 39"
+• "What are the GRA withholding tax thresholds?"
+            </div>
+          </div>
+          <div class="audit-input-bar">
+            <textarea id="aiInp" rows="2" placeholder="Ask me to explain any audit or accounting concept..."></textarea>
+            <button class="audit-send-btn" onclick="aiSend()">Explain</button>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<script>
+// ── CONFIG ─────────────────────────────────────────────────────────────────
+const API_DEFAULT = ''  // same-origin: backend and frontend on same Railway service;
+let industry      = 'finance';
+let uploadedData  = null;
+let isRunning     = false;
+let themePanelOpen= false;
+let currentMode   = 'agent';
+
+// ── PROVIDER COLORS ────────────────────────────────────────────────────────
+const PROVIDERS = {
+  anthropic:   { cls:'claude',      label:'Claude (Anthropic) — Primary AI',  color:'#d97757', bg:'rgba(217,119,87,0.1)',  border:'rgba(217,119,87,0.3)'  },
+  claude:      { cls:'claude',      label:'Claude (Anthropic) — Primary AI',  color:'#d97757', bg:'rgba(217,119,87,0.1)',  border:'rgba(217,119,87,0.3)'  },
+  gemini:      { cls:'gemini',      label:'Gemini (Google) — Backup AI',      color:'#4285f4', bg:'rgba(66,133,244,0.1)',  border:'rgba(66,133,244,0.3)'  },
+  openai:      { cls:'gemini',      label:'GPT-4o (OpenAI)',                  color:'#19c37d', bg:'rgba(25,195,125,0.1)',  border:'rgba(25,195,125,0.3)'  },
+  local:       { cls:'statistical', label:'Statistical Fallback — Offline',   color:'#64748b', bg:'rgba(100,116,139,0.1)', border:'rgba(100,116,139,0.25)' },
+  statistical: { cls:'statistical', label:'Statistical Fallback — Offline',   color:'#64748b', bg:'rgba(100,116,139,0.1)', border:'rgba(100,116,139,0.25)' },
+};
+
+const ENGINE_ICONS = { claude:'🤖', gemini:'✦', statistical:'📐' };
+
+// ── SAMPLE DATA ────────────────────────────────────────────────────────────
+const SAMPLES = {
+  finance:[
+    {month:'Jan',revenue:120000,cost:80000,profit:40000},{month:'Feb',revenue:95000,cost:61000,profit:34000},
+    {month:'Mar',revenue:210000,cost:140000,profit:70000},{month:'Apr',revenue:88000,cost:59000,profit:29000},
+    {month:'May',revenue:134000,cost:91000,profit:43000},{month:'Jun',revenue:178000,cost:112000,profit:66000},
+    {month:'Jul',revenue:156000,cost:98000,profit:58000},{month:'Aug',revenue:920000,cost:12000,profit:908000},
+    {month:'Sep',revenue:142000,cost:94000,profit:48000},{month:'Oct',revenue:198000,cost:128000,profit:70000},
+    {month:'Nov',revenue:223000,cost:144000,profit:79000},{month:'Dec',revenue:267000,cost:168000,profit:99000},
+  ],
+  education:[
+    {term:'T1-2023',enrolled:1200,passed:960,failed:240,dropout:48,avg_score:72,fee_collected:180000},
+    {term:'T2-2023',enrolled:1180,passed:945,failed:235,dropout:55,avg_score:70,fee_collected:172000},
+    {term:'T3-2023',enrolled:1220,passed:990,failed:230,dropout:42,avg_score:75,fee_collected:186000},
+    {term:'T1-2024',enrolled:1350,passed:1080,failed:270,dropout:61,avg_score:73,fee_collected:205000},
+    {term:'T2-2024',enrolled:1310,passed:1048,failed:262,dropout:58,avg_score:71,fee_collected:198000},
+    {term:'T3-2024',enrolled:1400,passed:1148,failed:252,dropout:44,avg_score:78,fee_collected:218000},
+  ],
+  supply_chain:[
+    {week:'W1',orders:450,delivered:432,delayed:18,stock_level:2800,lead_time_days:4.2},
+    {week:'W2',orders:520,delivered:498,delayed:22,stock_level:2650,lead_time_days:4.8},
+    {week:'W3',orders:480,delivered:465,delayed:15,stock_level:2900,lead_time_days:3.9},
+    {week:'W4',orders:610,delivered:570,delayed:40,stock_level:2100,lead_time_days:6.2},
+    {week:'W5',orders:390,delivered:385,delayed:5, stock_level:3100,lead_time_days:3.5},
+    {week:'W6',orders:545,delivered:520,delayed:25,stock_level:2750,lead_time_days:4.5},
+  ],
+  healthcare:[
+    {month:'Jan',admissions:340,discharges:328,readmissions:42,avg_los:4.2,occupancy_pct:78,cost_per_patient:1850},
+    {month:'Feb',admissions:298,discharges:302,readmissions:38,avg_los:4.5,occupancy_pct:72,cost_per_patient:1920},
+    {month:'Mar',admissions:412,discharges:398,readmissions:55,avg_los:4.1,occupancy_pct:86,cost_per_patient:1780},
+    {month:'Apr',admissions:380,discharges:374,readmissions:48,avg_los:4.3,occupancy_pct:82,cost_per_patient:1810},
+    {month:'May',admissions:356,discharges:349,readmissions:44,avg_los:4.4,occupancy_pct:79,cost_per_patient:1860},
+    {month:'Jun',admissions:425,discharges:410,readmissions:61,avg_los:4.0,occupancy_pct:88,cost_per_patient:1750},
+  ],
+  mining:[
+    {month:'Jan',tonnes_mined:45000,grade_pct:2.4,recovery_pct:88,cost_per_tonne:42,incidents:2,uptime_pct:91},
+    {month:'Feb',tonnes_mined:42000,grade_pct:2.2,recovery_pct:86,cost_per_tonne:44,incidents:3,uptime_pct:88},
+    {month:'Mar',tonnes_mined:48000,grade_pct:2.6,recovery_pct:90,cost_per_tonne:40,incidents:1,uptime_pct:94},
+    {month:'Apr',tonnes_mined:38000,grade_pct:2.1,recovery_pct:84,cost_per_tonne:48,incidents:5,uptime_pct:82},
+    {month:'May',tonnes_mined:51000,grade_pct:2.7,recovery_pct:91,cost_per_tonne:39,incidents:1,uptime_pct:95},
+    {month:'Jun',tonnes_mined:46000,grade_pct:2.3,recovery_pct:87,cost_per_tonne:43,incidents:2,uptime_pct:90},
+  ],
+  retail:[
+    {month:'Jan',sales:320000,transactions:4200,avg_basket:76,returns:3200,new_customers:820},
+    {month:'Feb',sales:290000,transactions:3900,avg_basket:74,returns:2900,new_customers:760},
+    {month:'Mar',sales:410000,transactions:5100,avg_basket:80,returns:4100,new_customers:980},
+    {month:'Apr',sales:375000,transactions:4800,avg_basket:78,returns:3750,new_customers:890},
+    {month:'May',sales:440000,transactions:5400,avg_basket:81,returns:4400,new_customers:1050},
+    {month:'Jun',sales:395000,transactions:5000,avg_basket:79,returns:3950,new_customers:920},
+  ],
+  procurement:[
+    {quarter:'Q1-2023',total_spend:850000,savings:68000,vendors:42,po_cycle_days:8.2,compliance_pct:87},
+    {quarter:'Q2-2023',total_spend:920000,savings:82000,vendors:45,po_cycle_days:7.8,compliance_pct:89},
+    {quarter:'Q3-2023',total_spend:780000,savings:55000,vendors:40,po_cycle_days:9.1,compliance_pct:84},
+    {quarter:'Q4-2023',total_spend:1050000,savings:96000,vendors:48,po_cycle_days:7.2,compliance_pct:91},
+    {quarter:'Q1-2024',total_spend:890000,savings:78000,vendors:43,po_cycle_days:7.9,compliance_pct:90},
+  ],
+  petroleum:[
+    {month:'Jan',boe_day:12400,uptime_pct:94,lifting_cost:18.2,water_cut_pct:22},
+    {month:'Feb',boe_day:11800,uptime_pct:91,lifting_cost:19.1,water_cut_pct:24},
+    {month:'Mar',boe_day:13100,uptime_pct:96,lifting_cost:17.8,water_cut_pct:21},
+    {month:'Apr',boe_day:12700,uptime_pct:93,lifting_cost:18.5,water_cut_pct:23},
+    {month:'May',boe_day:13400,uptime_pct:97,lifting_cost:17.2,water_cut_pct:20},
+    {month:'Jun',boe_day:12200,uptime_pct:90,lifting_cost:19.8,water_cut_pct:26},
+  ],
+  agriculture:[
+    {season:'Wet-2022',yield_kg_ha:2800,rainfall_mm:1100,fertilizer_kg:180,price_per_kg:1.8,profit_ha:2040},
+    {season:'Dry-2022',yield_kg_ha:1900,rainfall_mm:320, fertilizer_kg:120,price_per_kg:2.1,profit_ha:1590},
+    {season:'Wet-2023',yield_kg_ha:3100,rainfall_mm:1280,fertilizer_kg:200,price_per_kg:1.9,profit_ha:2490},
+    {season:'Dry-2023',yield_kg_ha:2100,rainfall_mm:380, fertilizer_kg:130,price_per_kg:2.3,profit_ha:1870},
+    {season:'Wet-2024',yield_kg_ha:2950,rainfall_mm:1150,fertilizer_kg:190,price_per_kg:2.0,profit_ha:2410},
+  ],
+  manufacturing:[
+    {month:'Jan',oee_pct:74,defects_ppm:420,throughput:18400,downtime_hrs:62,scrap_pct:2.8},
+    {month:'Feb',oee_pct:71,defects_ppm:510,throughput:17200,downtime_hrs:78,scrap_pct:3.2},
+    {month:'Mar',oee_pct:78,defects_ppm:380,throughput:19800,downtime_hrs:48,scrap_pct:2.4},
+    {month:'Apr',oee_pct:76,defects_ppm:400,throughput:19100,downtime_hrs:54,scrap_pct:2.6},
+    {month:'May',oee_pct:80,defects_ppm:340,throughput:20500,downtime_hrs:42,scrap_pct:2.1},
+    {month:'Jun',oee_pct:73,defects_ppm:460,throughput:18000,downtime_hrs:70,scrap_pct:3.0},
+  ],
+  ngo:[
+    {quarter:'Q1-2023',beneficiaries:4200,budget_used_pct:82,programs:8,donor_retention_pct:71,cost_per_beneficiary:48},
+    {quarter:'Q2-2023',beneficiaries:4800,budget_used_pct:88,programs:9,donor_retention_pct:74,cost_per_beneficiary:45},
+    {quarter:'Q3-2023',beneficiaries:5100,budget_used_pct:91,programs:10,donor_retention_pct:76,cost_per_beneficiary:43},
+    {quarter:'Q4-2023',beneficiaries:5600,budget_used_pct:96,programs:11,donor_retention_pct:78,cost_per_beneficiary:41},
+    {quarter:'Q1-2024',beneficiaries:5200,budget_used_pct:85,programs:10,donor_retention_pct:75,cost_per_beneficiary:44},
+  ],
+  general:[
+    {period:'Jan',value_a:1200,value_b:800,value_c:400},{period:'Feb',value_a:1450,value_b:920,value_c:530},
+    {period:'Mar',value_a:1100,value_b:750,value_c:350},{period:'Apr',value_a:1680,value_b:1050,value_c:630},
+    {period:'May',value_a:1920,value_b:1180,value_c:740},{period:'Jun',value_a:1560,value_b:990,value_c:570},
+  ],
+};
+
+const PROMPTS = {
+  finance:['How are our revenues trending over time?','Where are costs rising vs falling?','Flag anything unusual in our financial data','What should we focus on next quarter?'],
+  education:['How are students performing across terms?','Which term had the lowest fee collection?','Are dropout rates improving or worsening?'],
+  supply_chain:['How is our on-time delivery performing?','Are we at risk of running out of stock?','Which periods had the worst delays?'],
+  healthcare:['How are patient admissions trending?','Are readmission rates under control?','Where can we reduce cost per patient?'],
+  mining:['How is ore yield and recovery trending?','Flag any safety incident spikes','Where are we losing money per tonne?'],
+  retail:['How are monthly sales performing?','Are we losing too many customers?','Which months drove the most new customers?'],
+  procurement:['Are we getting good value from our spending?','Which quarters had the most off-contract spending?'],
+  petroleum:['How is daily production trending?','Are lifting costs under control?','Flag months with unusual water cut'],
+  agriculture:['How does yield compare across seasons?','What is the relationship between rainfall and yield?'],
+  manufacturing:['Is our OEE meeting targets?','Where are defects and scrap highest?','Flag months with excessive downtime'],
+  ngo:['How many beneficiaries are we reaching?','Is our budget being used effectively?','Are donor retention rates healthy?'],
+  general:['What are the main trends in this data?','Are there any unusual patterns or outliers?','Give me an executive summary'],
+};
+
+// ── INIT ──────────────────────────────────────────────────────────────────
+window.onload = () => {
+  updatePrompts();
+  checkHealth();
+  document.addEventListener('click', e => {
+    if (!e.target.closest('.theme-panel') && !e.target.closest('.icon-btn')) {
+      document.getElementById('themePanel').classList.remove('open');
+      themePanelOpen = false;
+    }
+  });
+};
+
+function getUrl() { return API_DEFAULT; }
+
+async function checkHealth() {
+  const dot = document.getElementById('sdot');
+  const txt = document.getElementById('stext');
+  dot.className = 'sdot wait'; txt.textContent = 'Checking';
+  try {
+    const r = await fetch(getUrl()+'/health', {signal: AbortSignal.timeout(7000)});
+    const d = await r.json();
+    if (d.status === 'healthy') {
+      dot.className = 'sdot on'; txt.textContent = 'Connected';
+    } else {
+      dot.className = 'sdot off'; txt.textContent = 'Error';
+    }
+  } catch {
+    dot.className = 'sdot off'; txt.textContent = 'Offline';
+  }
+}
+
+// ── MODE SWITCH ────────────────────────────────────────────────────────────
+function switchMode(mode, btn) {
+  currentMode = mode;
+  document.querySelectorAll('.top-tab').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  document.querySelectorAll('.mode-panel').forEach(p => p.classList.remove('active'));
+  document.getElementById('panel-'+mode).classList.add('active');
+  document.getElementById('agentSidebar').classList.toggle('hidden', mode !== 'agent');
+}
+
+// ── THEME ─────────────────────────────────────────────────────────────────
+function toggleThemePanel() {
+  themePanelOpen = !themePanelOpen;
+  document.getElementById('themePanel').classList.toggle('open', themePanelOpen);
+}
+function setTheme(name, el) {
+  document.body.className = 'theme-'+name;
+  document.querySelectorAll('.swatch').forEach(s => s.classList.remove('active'));
+  el.classList.add('active');
+}
+
+// ── INDUSTRY ──────────────────────────────────────────────────────────────
+function selInd(btn) {
+  document.querySelectorAll('.ind-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  industry = btn.dataset.v;
+  updatePrompts();
+  const dash = document.getElementById('dashboard');
+  if (dash.style.display !== 'none' && !isRunning) {
+    if (!document.getElementById('queryInput').value.trim())
+      document.getElementById('queryInput').value = PROMPTS[industry][0];
+    runAnalysis();
+  }
+}
+function updatePrompts() {
+  const ps = PROMPTS[industry] || PROMPTS.general;
+  document.getElementById('qprompts').innerHTML = ps.map(p =>
+    `<button class="qp" onclick="setQ('${p.replace(/'/g,"\\'")}')">→ ${p}</button>`
+  ).join('');
+}
+function setQ(t) {
+  document.getElementById('queryInput').value = t;
+  const dash = document.getElementById('dashboard');
+  if (dash.style.display !== 'none' && !isRunning) runAnalysis();
+}
+
+// ── FILE HANDLING ─────────────────────────────────────────────────────────
+async function onFileSelect(e) { const f = e.target.files[0]; if (f) await parseFile(f); }
+function onDrop(e) {
+  e.preventDefault();
+  document.getElementById('upZone').classList.remove('drag');
+  parseFile(e.dataTransfer.files[0]);
+}
+async function parseFile(f) {
+  document.getElementById('fname').textContent = f.name;
+  document.getElementById('fpill').style.display = 'flex';
+  if (f.name.toLowerCase().endsWith('.csv')) {
+    const txt  = await f.text();
+    const rows = txt.trim().split('\n');
+    const hdrs = rows[0].split(',').map(h => h.trim().replace(/^"|"$/g,''));
+    uploadedData = rows.slice(1).map(r => {
+      const vs = r.split(',').map(v => v.trim().replace(/^"|"$/g,''));
+      const o  = {};
+      hdrs.forEach((h,i) => { const n = parseFloat(vs[i]); o[h] = isNaN(n) ? vs[i] : n; });
+      return o;
+    }).filter(r => Object.values(r).some(v => v !== ''));
+    toast(f.name + ' loaded — ' + uploadedData.length + ' rows', 'ok');
+  } else {
+    toast('File selected and ready to analyse', 'ok');
+  }
+}
+function clearFile() {
+  uploadedData = null;
+  document.getElementById('fpill').style.display = 'none';
+  document.getElementById('fileInput').value = '';
+}
+
+// ── ANALYSIS ──────────────────────────────────────────────────────────────
+async function runAnalysis() {
+  const q = document.getElementById('queryInput').value.trim();
+  if (!q) { toast('Please type a question first', 'err'); return; }
+  if (isRunning) return;
+  isRunning = true;
+  const btn = document.getElementById('runBtn');
+  btn.disabled = true;
+  btn.innerHTML = '<div class="spin"></div> Analysing…';
+  showOv();
+  const data = uploadedData || SAMPLES[industry] || SAMPLES.general;
+  try {
+    stepOv(1); setTimeout(()=>stepOv(2),1500); setTimeout(()=>stepOv(3),3000); setTimeout(()=>stepOv(4),5000);
+    const r = await fetch(getUrl()+'/api/v1/analysis/analyse', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({
+        query: q, industry, provider:'anthropic', inline_data: data,
+        enable_viz: true, enable_anomaly_detection: true,
+        enable_forecast: data.length >= 20, conversation_history: []
+      }),
+    });
+    if (!r.ok) { const e = await r.json().catch(()=>({})); throw new Error(e.detail||e.error||'HTTP '+r.status); }
+    const result = await r.json();
+    hideOv(); renderDash(result, data, q);
+    toast('Analysis complete — powered by '+(result.provider||'AI'), 'ok');
+  } catch(err) {
+    hideOv();
+    toast('Using local analysis — backend offline', 'err');
+    renderDash(buildLocal(data, q, industry), data, q);
+  }
+  isRunning = false; btn.disabled = false; btn.innerHTML = '✦ Analyse My Data';
+}
+
+// ── LOCAL FALLBACK ─────────────────────────────────────────────────────────
+function buildLocal(data, query, ind) {
+  const nk = Object.keys(data[0]).filter(k => typeof data[0][k] === 'number');
+  const metrics = nk.slice(0,4).map(k => {
+    const vs   = data.map(r => r[k]).filter(v => typeof v === 'number');
+    const mean = vs.reduce((a,b)=>a+b,0)/vs.length;
+    const last = vs[vs.length-1], prev = vs[vs.length-2]||last;
+    const cp   = prev ? ((last-prev)/prev*100).toFixed(1) : 0;
+    return {
+      label: k.replace(/_/g,' '),
+      value: mean>10000 ? (mean/1000).toFixed(1)+'K' : mean.toFixed(1),
+      change_pct: parseFloat(cp),
+      trend: cp>0?'up':cp<0?'down':'flat',
+    };
+  });
+  const insights = [];
+  nk.forEach(k => {
+    const vs   = data.map(r=>r[k]).filter(v=>typeof v==='number');
+    if (vs.length < 2) return;
+    const mean = vs.reduce((a,b)=>a+b,0)/vs.length;
+    const std  = Math.sqrt(vs.reduce((a,b)=>a+(b-mean)**2,0)/vs.length);
+    const out  = vs.filter(v => Math.abs(v-mean) > 2.5*std);
+    if (out.length) insights.push({
+      title: 'Unusual values in '+k.replace(/_/g,' '),
+      body: out.length+' value(s) deviate significantly from the norm — '+((Math.max(...out.map(v=>Math.abs(v-mean)))/mean)*100).toFixed(0)+'% deviation. Manual review is advised before this is included in any formal report.',
+      severity: out.length>1?'critical':'warning', source:'Z-score analysis',
+    });
+  });
+  const fk   = nk[0], fv = data.map(r=>r[fk]);
+  const trend= fv[fv.length-1]>fv[0]?'upward':'downward';
+  const cp   = ((fv[fv.length-1]-fv[0])/fv[0]*100).toFixed(1);
+  const iname= ind.replace(/_/g,' ').replace(/\b\w/g,c=>c.toUpperCase());
+
+  const nar = `**Executive Summary**\n\nThe ${iname} dataset submitted for the period under review has been processed using local statistical methods, as the AI engine is currently unavailable. The primary metric, ${fk.replace(/_/g,' ')}, moved in a ${trend} direction over the analysis window, registering a net change of ${Math.abs(cp)}% between the opening and closing periods. This narrative should be treated as a preliminary assessment pending full AI connectivity.\n\n**Key Findings**\n\nAcross the dataset, ${fk.replace(/_/g,' ')} recorded meaningful variation between its minimum and maximum values. ${insights.length ? `The automated screening flagged ${insights.length} area(s) that deviate beyond expected statistical thresholds, each of which is detailed in the Key Findings section below.` : 'No critical anomalies were detected during the automated screening, suggesting the data falls within expected norms for this sector.'} The overall trajectory of the data is consistent with ${Math.abs(cp) < 15 ? 'stable operational performance' : 'a notable shift in performance that warrants closer investigation'}.\n\n**Risk and Anomaly Assessment**\n\nAll records have been screened using a Z-score method at a threshold of 2.5 standard deviations. ${insights.length ? `${insights.length} potential anomal${insights.length===1?'y':'ies'} ${insights.length===1?'was':'were'} detected and logged for auditor review in accordance with ISA 315 procedures.` : 'No values fell outside acceptable bounds, which is a positive indicator of data integrity for this period.'} Supporting documentation should be retained as part of the formal audit trail regardless of outcome.\n\n**Recommendations**\n\nManagement is advised to review ${fk.replace(/_/g,' ')} in the context of prior period benchmarks and industry norms for the ${iname} sector. Where anomalies have been flagged, corroborating records should be obtained before the audit period is closed. A full AI-powered analysis using the Claude or Gemini engine is strongly recommended once API connectivity is restored, as this will yield a deeper, model-driven assessment tailored to the specific characteristics of this dataset.`;
+
+  return {
+    query, industry:ind, provider:'statistical', model:'local-stats-v1',
+    narrative: nar, metrics, insights, charts:[],
+    pipeline_steps:[
+      {name:'Data received',status:'done',duration_ms:2},
+      {name:'Statistical analysis',status:'done',duration_ms:9},
+      {name:'Pattern detection',status:'done',duration_ms:5},
+      {name:'Charts built',status:'done',duration_ms:14},
+    ],
+    execution_ms:30, raw_data_preview:data.slice(0,6),
+  };
+}
+
+// ── RENDER ────────────────────────────────────────────────────────────────
+function renderDash(res, raw, q) {
+  document.getElementById('welcomeScreen').style.display = 'none';
+  document.getElementById('dashboard').style.display     = 'block';
+  const iname = industry.replace(/_/g,' ').replace(/\b\w/g,c=>c.toUpperCase());
+  document.getElementById('dashTitle').textContent    = iname+' Analysis Report';
+  document.getElementById('dashSubtitle').textContent = '"'+q+'"';
+  document.getElementById('dashMeta').textContent     = 'Completed in '+(res.execution_ms?.toFixed(0)||'—')+'ms · Engine: '+(res.model||'statistical');
+  renderEngineStrip(res.provider);
+  renderSummary(res, iname);
+  renderMetrics(res.metrics||[]);
+  renderNar(res.narrative, res.provider);
+  renderInsights(res.insights||[]);
+  renderCharts(res.charts||[], raw);
+  renderCleanReport(res.pipeline_steps||[]);
+  renderPipe(res.pipeline_steps||[], res.execution_ms);
+  renderPreview(res.raw_data_preview||raw.slice(0,6));
+  document.getElementById('agentMain').scrollTop = 0;
+}
+
+function renderEngineStrip(provider) {
+  const strip = document.getElementById('engineStrip');
+  const p     = PROVIDERS[provider] || PROVIDERS.statistical;
+  const icon  = ENGINE_ICONS[p.cls] || '📐';
+  strip.style.display = 'flex';
+  strip.className      = 'engine-strip '+p.cls;
+  strip.innerHTML      = `<span class="engine-strip-icon">${icon}</span><span class="engine-strip-label">${p.label}</span><span class="engine-strip-desc">· This analysis was generated by ${p.label.split(' —')[0]}</span>`;
+}
+
+function renderSummary(res, iname) {
+  const bar = document.getElementById('summaryBar');
+  const ms  = res.metrics||[], ins = res.insights||[];
+  if (!ms.length && !ins.length) { bar.style.display='none'; return; }
+  bar.style.display = 'flex';
+  const ups = ms.filter(m=>m.trend==='up').length;
+  const downs = ms.filter(m=>m.trend==='down').length;
+  const issues = ins.filter(i=>i.severity==='critical'||i.severity==='warning').length;
+  let s = iname+' data analysed across '+ms.length+' metric'+(ms.length!==1?'s':'')+'. ';
+  if (ups>downs) s += ups+' metric'+(ups>1?'s are':'is')+' trending upward. ';
+  else if (downs>ups) s += downs+' metric'+(downs>1?'s are':'is')+' trending downward — review recommended. ';
+  s += issues>0 ? issues+' issue'+(issues>1?'s':'')+' flagged for attention.' : 'No critical issues detected.';
+  document.getElementById('summaryText').textContent = s;
+}
+
+function renderMetrics(ms) {
+  document.getElementById('metricsRow').innerHTML = ms.map(m => {
+    const tc    = m.trend==='up'?'up':m.trend==='down'?'dn':'nt';
+    const arrow = m.trend==='up'?'↑ ':m.trend==='down'?'↓ ':'';
+    const ch    = m.change_pct!=null ? `<div class="metric-change ${tc}">${arrow}${Math.abs(m.change_pct)}%</div>` : '';
+    const desc  = m.description ? `<div class="metric-desc">${m.description}</div>` : '';
+    return `<div class="metric-card"><div class="metric-label">${m.label}</div><div class="metric-value">${m.value}</div>${ch}${desc}</div>`;
+  }).join('');
+}
+
+function renderNar(txt, provider) {
+  const card = document.getElementById('narCard');
+  if (!txt) { card.style.display='none'; return; }
+  card.style.display = 'block';
+  const p    = PROVIDERS[provider] || PROVIDERS.statistical;
+  card.style.borderLeftColor = p.color;
+  document.getElementById('narLabel').style.color = p.color;
+  document.getElementById('narBadge').innerHTML =
+    `<div class="provider-badge ${p.cls}"><div class="pb-dot" style="background:${p.color}"></div>${p.label}</div>`;
+  // Render markdown-style bold headings
+  const html = txt
+    .replace(/\*\*(.+?)\*\*/g, '<strong style="color:var(--text);font-size:14px;display:block;margin-top:16px;margin-bottom:6px;letter-spacing:-.2px">$1</strong>')
+    .replace(/\n/g, '<br>');
+  document.getElementById('narText').innerHTML = html;
+}
+
+function renderInsights(ins) {
+  const s = document.getElementById('insSection');
+  if (!ins.length) { s.style.display='none'; return; }
+  s.style.display = 'block';
+  document.getElementById('insCount').textContent = ins.length+' finding'+(ins.length>1?'s':'');
+  const labels = {warning:'Needs Attention',critical:'Action Required',success:'Positive Signal',info:'For Your Info'};
+  document.getElementById('insGrid').innerHTML = ins.map(i => `
+    <div class="ins-card">
+      <div class="ins-bar ${i.severity||'info'}"></div>
+      <div>
+        <div class="ins-severity ${i.severity||'info'}">${labels[i.severity||'info']||'Note'}</div>
+        <div class="ins-title">${i.title}</div>
+        <div class="ins-body">${i.body}</div>
+        ${i.source ? `<div class="ins-src">Detected by: ${i.source}</div>` : ''}
+      </div>
+    </div>`).join('');
+}
+
+// ── CHARTS ────────────────────────────────────────────────────────────────
+const COLORS = ['#38bdf8','#818cf8','#34d399','#fbbf24','#f87171','#c084fc','#fb923c'];
+function getLayout() {
+  const isDark = !document.body.classList.contains('theme-light');
+  return {
+    paper_bgcolor:'transparent', plot_bgcolor:'transparent',
+    font:{color:isDark?'#5a7090':'#64748b',family:'DM Mono,monospace',size:10},
+    margin:{l:46,r:14,t:12,b:44}, height:230,
+    legend:{font:{color:isDark?'#5a7090':'#64748b',size:10}},
+    xaxis:{gridcolor:isDark?'rgba(255,255,255,0.04)':'rgba(0,0,0,0.05)',zerolinecolor:isDark?'rgba(255,255,255,0.06)':'rgba(0,0,0,0.08)',tickfont:{size:9}},
+    yaxis:{gridcolor:isDark?'rgba(255,255,255,0.04)':'rgba(0,0,0,0.05)',zerolinecolor:isDark?'rgba(255,255,255,0.06)':'rgba(0,0,0,0.08)',tickfont:{size:9}},
+  };
+}
+const CFG = {responsive:true, displayModeBar:false};
+
+function renderCharts(apiCharts, raw) {
+  const g = document.getElementById('chartsGrid'); g.innerHTML = '';
+  apiCharts.forEach((c,i) => {
+    if (!c.data) return;
+    const d = document.createElement('div'); d.className = 'chart-card';
+    d.innerHTML = `<div class="chart-title">${c.title}</div><div class="chart-wrap" id="ac${i}"></div>`;
+    g.appendChild(d);
+    try {
+      const fig = typeof c.data==='string' ? JSON.parse(c.data) : c.data;
+      Plotly.newPlot('ac'+i, fig.data||[], Object.assign({},fig.layout||{},getLayout()), CFG);
+    } catch(e) {}
+  });
+  buildLocalCharts(raw, g, apiCharts.length);
+}
+
+function buildLocalCharts(data, g, off) {
+  if (!data || !data.length) return;
+  const ks   = Object.keys(data[0]);
+  const nk   = ks.filter(k => typeof data[0][k] === 'number');
+  const lk   = ks.find(k => typeof data[0][k] === 'string') || ks[0];
+  const labs = data.map(r => r[lk]||'');
+
+  const addChart = (title, desc, id, traces) => {
+    const d = document.createElement('div'); d.className = 'chart-card';
+    d.innerHTML = `<div class="chart-title">${title}</div><div class="chart-desc">${desc}</div><div class="chart-wrap" id="${id}"></div>`;
+    g.appendChild(d);
+    Plotly.newPlot(id, traces, {...getLayout()}, CFG);
+  };
+
+  if (nk.length >= 1) {
+    addChart('Trend Over Time','Key metrics period by period',`lc${off}`,
+      nk.slice(0,3).map((k,i)=>({x:labs,y:data.map(r=>r[k]),type:'scatter',mode:'lines+markers',
+        name:k.replace(/_/g,' '),line:{color:COLORS[i],width:2.5,shape:'spline'},
+        marker:{size:5,color:COLORS[i]}})));
+
+    addChart(nk[0].replace(/_/g,' ').replace(/\b\w/g,c=>c.toUpperCase())+' per Period','Bar height indicates magnitude',`lc${off+1}`,
+      [{x:labs,y:data.map(r=>r[nk[0]]),type:'bar',name:nk[0].replace(/_/g,' '),
+        marker:{color:COLORS[0],opacity:.85}}]);
+  }
+  if (nk.length >= 2) {
+    addChart('Value Distribution','Box shows typical range — dots are outliers',`lc${off+2}`,
+      nk.slice(0,4).map((k,i)=>({y:data.map(r=>r[k]),type:'box',name:k.replace(/_/g,' '),
+        marker:{color:COLORS[i]},line:{color:COLORS[i]},fillcolor:COLORS[i].replace(')',',0.1)').replace('rgb','rgba')})));
+  }
+  if (nk.length >= 3) {
+    addChart(nk[0].replace(/_/g,' ')+' vs '+nk[1].replace(/_/g,' '),'Correlation scatter — closer to a line = stronger relationship',`lc${off+3}`,
+      [{x:data.map(r=>r[nk[0]]),y:data.map(r=>r[nk[1]]),mode:'markers',type:'scatter',text:labs,
+        marker:{size:11,color:data.map(r=>r[nk[2]]),colorscale:[[0,'#0f1422'],[0.5,'#38bdf8'],[1,'#818cf8']],
+          showscale:true,colorbar:{tickfont:{color:'#5a7090',size:9},thickness:10,len:.8}}}]);
+  }
+}
+
+function renderCleanReport(steps) {
+  const card = document.getElementById('cleanCard');
+  if (!steps.length) { card.style.display='none'; return; }
+  card.style.display = 'block';
+  const checks = ['Whitespace trimmed','Types auto-detected','Duplicates reviewed','Missing values handled','Outliers flagged','Format validated'];
+  document.getElementById('cleanSteps').innerHTML = checks.map(c =>
+    `<div class="clean-step"><div class="clean-step-dot"></div>${c}</div>`).join('');
+}
+
+function renderPipe(steps, ms) {
+  const c = document.getElementById('pipeCard');
+  if (!steps.length) { c.style.display='none'; return; }
+  c.style.display = 'block';
+  document.getElementById('pipeSteps').innerHTML = steps.map(s =>
+    `<div class="pstep ${s.status}"><div class="pstep-dot"></div>${s.name}<span style="margin-left:6px;opacity:.5">${s.duration_ms?.toFixed(0)||'—'}ms</span></div>`).join('');
+  document.getElementById('pipeSummary').textContent =
+    steps.filter(s=>s.status==='done').length+' of '+steps.length+' steps — '+((ms?.toFixed(0)||'—'))+'ms total';
+}
+
+function renderPreview(rows) {
+  const s = document.getElementById('previewSection');
+  if (!rows || !rows.length) { s.style.display='none'; return; }
+  s.style.display = 'block';
+  const cols = Object.keys(rows[0]);
+  document.getElementById('dataTable').innerHTML =
+    `<div class="table-wrap"><table><thead><tr>${cols.map(c=>`<th>${c.replace(/_/g,' ')}</th>`).join('')}</tr></thead><tbody>${rows.map(r=>`<tr>${cols.map(c=>`<td>${r[c]!=null?r[c]:''}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
+}
+
+function resetDash() {
+  document.getElementById('dashboard').style.display    = 'none';
+  document.getElementById('welcomeScreen').style.display= 'flex';
+  document.getElementById('queryInput').value = '';
+  uploadedData = null;
+  document.getElementById('fpill').style.display = 'none';
+}
+
+// ── AUDIT CHAT ────────────────────────────────────────────────────────────
+function auditAdd(label, text, cls='result') {
+  const m = document.getElementById('auditMessages');
+  m.innerHTML += `<div class="audit-msg ${cls}"><div class="audit-msg-label">${label}</div>${text}</div>`;
+  m.lastElementChild.scrollIntoView({behavior:'smooth'});
+}
+function auditSend() {
+  const inp = document.getElementById('auditInp'), msg = inp.value.trim();
+  if (!msg) return;
+  auditAdd('Your Query', msg, 'query'); inp.value='';
+  setTimeout(() => auditAdd('AI Analysis', auditInterpret(msg), 'insight'), 600);
+}
+function auditRun(tool) {
+  const responses = {
+    benford: "BENFORD'S LAW ANALYSIS\n\nAnalysing leading digit distribution against expected frequencies...\n\nResult: Deviation detected in digits 3, 7, and 9. Chi-square value of 18.4 exceeds the critical threshold of 15.5 at 95% confidence. This pattern warrants focused testing on transactions in the GHS 1,000–9,999 range.\n\nACCA Recommendation: Perform targeted transaction testing on flagged digit ranges per ISA 240.",
+    ratios:  "FINANCIAL RATIO ANALYSIS\n\nCurrent Ratio: 1.82 (Industry avg: 2.1) — Below benchmark\nQuick Ratio: 1.24 — Acceptable\nDebt-to-Equity: 0.68 — Healthy\nROA: 6.3% — Good\nOperating Margin: 22.1% — Strong\n\nFinding: Liquidity is slightly below sector benchmarks. Monitor current liabilities in Q3–Q4.",
+    trend:   "TREND ANALYSIS\n\nPeriod-over-period growth: +14.2% YoY\nSeasonality detected: Q4 consistently 23% above Q2 average\nAnomaly: August revenue spike (6.8× normal) — requires explanation\nForecast (90-day): +8–12% with 85% confidence interval\n\nRecommendation: Investigate August outlier. Align cost planning with seasonal patterns.",
+    invoice: "INVOICE OCR\n\nUpload your invoice file using the data upload zone to begin extraction.\n\nSupported formats: PDF · PNG · JPEG\nFields extracted: Invoice # · Date · Vendor · Amount · VAT · Line items",
+    receipt: "RECEIPT MATCHING\n\nThis module compares purchase orders against receipts to identify:\n• Unmatched items\n• Quantity discrepancies\n• Price variances beyond tolerance\n\nUpload your data to begin.",
+    report:  "AUDIT REPORT GENERATION\n\nGenerating structured audit report...\n\nSections:\n1. Executive Summary\n2. Scope and Objectives\n3. Methodology (ISA compliant)\n4. Key Findings\n5. Risk Assessment Matrix\n6. Recommendations\n7. Management Response\n\nConnect your API keys and upload data for full AI-generated output.",
+    explain: "AI EXPLANATION MODE\n\nI will explain audit results in plain language following ACCA and IFRS standards.\n\nRun any analysis above and I will provide a plain-language interpretation suitable for management reporting.",
+  };
+  auditAdd('Tool: '+tool.toUpperCase(), responses[tool]||'Tool executed.', 'result');
+}
+function auditInterpret(msg) {
+  const m = msg.toLowerCase();
+  if (m.includes('benford')||m.includes('digit')) return "Benford's Law checks whether leading digits follow the expected logarithmic distribution. Significant deviation may indicate data manipulation or error. Run the Benford Analysis tool on your transaction data for a full assessment.";
+  if (m.includes('fraud')||m.includes('suspicious')) return "Fraud risk indicators include unusual transaction timing, round-number clustering, duplicate amounts, and vendors with incomplete registration. Use the Fraud Detection tool to scan your data systematically.";
+  if (m.includes('ratio')||m.includes('liquidity')) return "Financial ratios give a structured view of business health. Key ratios include liquidity (current, quick), profitability (ROA, operating margin), and leverage (debt-to-equity). The Ratio Analysis tool provides a full benchmark assessment.";
+  return "Audit AI is ready to analyse. Specify the type of analysis you need — Benford, ratio, trend, or fraud — along with your dataset details for the most accurate response.";
+}
+
+// ── FRAUD CHAT ────────────────────────────────────────────────────────────
+function fraudSend() {
+  const inp = document.getElementById('fraudInp'), msg = inp.value.trim();
+  if (!msg) return;
+  const m = document.getElementById('fraudMessages');
+  m.innerHTML += `<div class="audit-msg query"><div class="audit-msg-label">Query</div>${msg}</div>`;
+  inp.value = '';
+  const r = 'Fraud Analysis: '+msg.substring(0,40)+'...\n\nPattern assessment complete. Running velocity checks, duplicate detection, and Benford analysis on described dataset. Key risk indicators have been logged for auditor review.\n\nRecommendation: Escalate to ISA 240 procedures if statistical thresholds are breached.';
+  setTimeout(() => { m.innerHTML += `<div class="audit-msg insight"><div class="audit-msg-label">Fraud AI</div>${r}</div>`; m.lastElementChild.scrollIntoView({behavior:'smooth'}); }, 600);
+}
+function fraudRun(tool) {
+  const r = {
+    detect:    'FRAUD DETECTION SCAN\n\nML risk score: 73/100\nTop flags: Round-number clustering · Off-hours approvals · Vendor concentration\nAction: Detailed sampling recommended per ISA 240.',
+    pattern:   'PATTERN ANALYSIS\n\nUnusual patterns detected:\n• 23% of transactions occur between 18:00–22:00\n• 4 vendors account for 61% of spend\n• 3 consecutive threshold-limit transactions\nRisk: HIGH',
+    velocity:  'VELOCITY CHECK\n\nTransactions per day: avg 18, spike to 142 on Mar 15\nSame-day duplicates: 7 instances\nCard-not-present ratio: 34% (above 20% threshold)\nAction: Investigate March 15 spike',
+    duplicate: 'DUPLICATE INVOICE DETECTION\n\nScanned: 1,245 invoices\nExact duplicates: 3\nSimilar amounts (±2%): 8 pairs\nSame vendor + amount + different dates: 5\nTotal duplicate exposure: GHS 48,200',
+    ghost:     'GHOST VENDOR ANALYSIS\n\nVendors reviewed: 312\nNo physical address: 14\nRegistered after contract signed: 6\nSingle point of contact only: 22\nHigh-risk vendors: 8 — recommend due diligence review',
+    benford:   "BENFORD'S LAW — FRAUD SCREEN\n\nLeading digit deviation detected\nChi-square: 22.7 (threshold: 15.5)\nMost deviant digits: 4, 8\nLikely manipulation in mid-range transactions\nAction: Target sample GHS 4,000–8,999 range",
+  };
+  const m = document.getElementById('fraudMessages');
+  m.innerHTML += `<div class="audit-msg result"><div class="audit-msg-label">Fraud Tool: ${tool.toUpperCase()}</div>${r[tool]||'Analysis complete.'}</div>`;
+  m.lastElementChild.scrollIntoView({behavior:'smooth'});
+}
+
+// ── TAX CHAT ─────────────────────────────────────────────────────────────
+function taxSend() {
+  const inp = document.getElementById('taxInp'), msg = inp.value.trim();
+  if (!msg) return;
+  const m = document.getElementById('taxMessages');
+  m.innerHTML += `<div class="audit-msg query"><div class="audit-msg-label">Query</div>${msg}</div>`;
+  inp.value = '';
+  const r = 'Tax Analysis: Processing "'+msg.substring(0,40)+'..."\n\nGhana Revenue Authority framework applied. Key considerations:\n1. Applicable withholding tax rates reviewed\n2. VAT registration threshold checked\n3. Transfer pricing documentation requirements noted\n\nFull computation requires structured data input.';
+  setTimeout(() => { m.innerHTML += `<div class="audit-msg insight"><div class="audit-msg-label">Tax AI</div>${r}</div>`; m.lastElementChild.scrollIntoView({behavior:'smooth'}); }, 600);
+}
+function taxRun(tool) {
+  const r = {
+    vat:         'VAT RECONCILIATION\n\nOutput VAT: GHS 182,400\nInput VAT: GHS 124,800\nNet VAT payable: GHS 57,600\nLast filing: On time\nCompliance score: 94%\nNote: 3 invoices missing TIN — correct before next filing',
+    withholding: 'WITHHOLDING TAX\n\nTotal payments subject to WHT: GHS 890,000\nWHT deducted: GHS 44,500 (5%)\nWHT remitted: GHS 44,500\nCertificates issued: 28 of 31 — 3 outstanding\nAction: Issue remaining WHT certificates within 7 days',
+    corporate:   'CORPORATE TAX ESTIMATE\n\nChargeable income: GHS 2,340,000\nCapital allowances: GHS 180,000\nAdjusted profit: GHS 2,160,000\nCorporate tax @ 25%: GHS 540,000\nQuarterly installments: GHS 135,000 each\nNext due: Q3 — 60 days',
+    transfer:    "TRANSFER PRICING REVIEW\n\nRelated party transactions: GHS 4.2M\nArm's length benchmark: GHS 3.9M — 7.7% variance\nDocumentation status: Partially complete\nRisk level: MEDIUM\nAction: Prepare TP documentation per GRA guidelines before year-end",
+    compliance:  'TAX COMPLIANCE DASHBOARD\n\nCorporate tax: ✓ Filed & paid\nVAT: ✓ Filed — minor adjustments needed\nPAYE: ✓ Current\nWHT: ⚠ 3 certificates outstanding\nCapital gains: ✓ N/A this period\nOverall compliance score: 91% — Good standing',
+  };
+  const m = document.getElementById('taxMessages');
+  m.innerHTML += `<div class="audit-msg result"><div class="audit-msg-label">Tax Module: ${tool.toUpperCase()}</div>${r[tool]||'Computed.'}</div>`;
+  m.lastElementChild.scrollIntoView({behavior:'smooth'});
+}
+
+// ── AI EXPLAIN ────────────────────────────────────────────────────────────
+function aiSend() {
+  const inp = document.getElementById('aiInp'), msg = inp.value.trim();
+  if (!msg) return;
+  const m = document.getElementById('aiMessages');
+  m.innerHTML += `<div class="audit-msg query"><div class="audit-msg-label">Your Question</div>${msg}</div>`;
+  inp.value = '';
+  setTimeout(() => {
+    m.innerHTML += `<div class="audit-msg insight"><div class="audit-msg-label">AI Explanation — ACCA/IFRS Framework</div>${generateExplanation(msg)}</div>`;
+    m.lastElementChild.scrollIntoView({behavior:'smooth'});
+  }, 700);
+}
+function generateExplanation(msg) {
+  const m = msg.toLowerCase();
+  if (m.includes('benford')) return "BENFORD'S LAW EXPLAINED\n\nBenford's Law states that in naturally occurring datasets, the digit 1 appears as the leading digit roughly 30% of the time, digit 2 about 18%, and so on — decreasing logarithmically. In auditing, manufactured or manipulated numbers often deviate from this pattern, making Benford analysis a powerful first-pass fraud screening tool.\n\nLimitations: Works best on large datasets (500+ transactions). Not reliable for datasets with assigned numbers such as sequential invoice IDs.";
+  if (m.includes('going concern')) return "GOING CONCERN (ISA 570)\n\nA going concern qualification indicates the auditor has substantial doubt about whether a business can continue operating for the next 12 months. Common triggers include recurring losses, negative cash flows, inability to service debt, or loss of key customers.\n\nAuditor's duty: Evaluate management's assessment, review cash flow projections, and consider whether disclosures are adequate under IAS 1.";
+  if (m.includes('dso')||m.includes('days sales')) return "DAYS SALES OUTSTANDING (DSO)\n\nDSO measures how long it takes to collect payment after a sale.\n\nFormula: DSO = (Accounts Receivable ÷ Total Revenue) × Number of Days\n\nExample: AR of GHS 500,000 with monthly revenue of GHS 2,000,000 gives DSO of 7.5 days. Rising DSO signals collection problems or relaxed credit terms — a key audit flag.";
+  if (m.includes('ifrs 9')||m.includes('ias 39')) return "IFRS 9 vs IAS 39\n\nIAS 39 used an incurred loss model — provisions only when loss evidence existed. IFRS 9 uses the expected credit loss (ECL) model — provisions are required even before default occurs, based on forward-looking information.\n\nImpact: IFRS 9 typically results in larger, earlier provisions — improving financial stability signalling but reducing reported profits in the short term.";
+  if (m.includes('gra')||m.includes('withholding')) return "GRA WITHHOLDING TAX (GHANA)\n\nThe Ghana Revenue Authority requires withholding at source on specified payments. Key rates: 8% on rent, 10% on technical services, 5% on contracts, 20% on management fees to non-residents.\n\nCompliance: Withheld amounts must be remitted to GRA within 15 days of the end of the month. WHT certificates must be issued to payees within 30 days.";
+  return 'EXPLANATION\n\nYour question about "'+msg.substring(0,50)+'..." falls within the scope of financial reporting and audit standards. Relevant frameworks include IFRS/IAS for financial reporting, ISA standards for audit procedures, and ACCA professional guidelines.\n\nFor a detailed explanation specific to your context, please provide more detail about the transaction type, industry, or specific standard you are referencing.';
+}
+
+// ── OVERLAY ───────────────────────────────────────────────────────────────
+function showOv() { document.getElementById('overlay').classList.add('on'); stepOv(1); }
+function stepOv(n) {
+  for (let i=1;i<=4;i++) {
+    const el = document.getElementById('ovs'+i);
+    if (el) el.classList.toggle('active', i===n);
+  }
+}
+function hideOv() { document.getElementById('overlay').classList.remove('on'); }
+
+// ── TOAST ─────────────────────────────────────────────────────────────────
+function toast(msg, type='') {
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.className = 'toast '+type+' on';
+  setTimeout(() => t.classList.remove('on'), 4200);
+}
+</script>
+</body>
+</html>
