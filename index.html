@@ -5,8 +5,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>DataMind — Audit AI Elite</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700;800&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700;800&family=DM+Mono:wght@400;500&family=Lora:ital,wght@0,400;0,500;0,600;1,400;1,500&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/plotly.js/2.26.0/plotly.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 
@@ -288,14 +290,62 @@ html,body{width:100%;height:100%;overflow:hidden;font-family:'DM Sans',system-ui
 .metric-desc{font-size:10px;color:var(--text3);margin-top:3px;line-height:1.4}
 .up{color:var(--green)}.dn{color:var(--red)}.nt{color:var(--text2)}
 
-/* Narrative card */
+/* Narrative card — editorial typeset */
 .narrative-card{
-  border:1px solid var(--border);border-left:3px solid var(--accent);border-radius:var(--r2);
-  padding:20px;margin-bottom:18px;transition:border-color .3s;
+  border:1px solid var(--border);border-radius:var(--r2);
+  padding:32px 36px;margin-bottom:18px;transition:border-color .3s;
+  background:var(--card);position:relative;overflow:hidden;
 }
-.nar-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:8px}
-.nar-label{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.12em;color:var(--accent);font-family:'DM Mono',monospace}
-.nar-body{font-size:13.5px;line-height:1.95;color:var(--text);white-space:pre-wrap;font-weight:400}
+.narrative-card::before{
+  content:'';position:absolute;top:0;left:0;width:4px;height:100%;
+  background:linear-gradient(180deg,var(--accent),var(--accent2));border-radius:4px 0 0 4px;
+}
+.narrative-card:hover{border-color:var(--border2)}
+.nar-header{
+  display:flex;align-items:flex-start;justify-content:space-between;
+  margin-bottom:28px;flex-wrap:wrap;gap:10px;padding-bottom:20px;
+  border-bottom:1px solid var(--border);
+}
+.nar-header-left{display:flex;flex-direction:column;gap:6px}
+.nar-label{
+  font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.18em;
+  color:var(--accent);font-family:'DM Mono',monospace;
+}
+.nar-title{
+  font-size:18px;font-weight:800;letter-spacing:-.4px;color:var(--text);line-height:1.2;
+}
+
+/* Section heading inside narrative */
+.nar-section-heading{
+  font-family:'DM Sans',sans-serif;
+  font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.14em;
+  color:var(--accent);margin:28px 0 10px;padding-bottom:6px;
+  border-bottom:1px solid var(--border);display:block;
+}
+.nar-section-heading:first-of-type{margin-top:0}
+
+/* Paragraph styling */
+.nar-para{
+  font-family:'DM Sans',sans-serif;
+  font-size:14.5px;line-height:2.0;color:var(--text);
+  font-weight:400;letter-spacing:.01em;
+  margin-bottom:18px;
+  max-width:720px;
+}
+.nar-para:last-child{margin-bottom:0}
+
+/* Inline number highlights */
+.nar-num{
+  font-family:'DM Mono',monospace;font-size:13px;font-weight:600;
+  color:var(--accent);background:rgba(56,189,248,0.08);
+  padding:1px 5px;border-radius:4px;
+}
+
+/* Drop cap on first paragraph */
+.nar-para.drop-cap::first-letter{
+  font-size:3.2em;font-weight:800;line-height:.75;float:left;
+  margin:4px 8px 0 0;color:var(--accent);font-family:'DM Sans',sans-serif;
+}
 
 /* Provider badge */
 .provider-badge{
@@ -455,6 +505,112 @@ tr:hover td{background:rgba(255,255,255,.015)}
 .toast.err{border-color:rgba(248,113,113,.4);color:var(--red)}
 .toast.ok{border-color:rgba(52,211,153,.4);color:var(--green)}
 
+/* ── SALES AUDIT PANEL ── */
+.sales-layout{flex:1;display:flex;min-height:0;overflow:hidden}
+.sales-sidebar{
+  width:240px;background:var(--card);border-right:1px solid var(--border);
+  padding:14px;overflow-y:auto;flex-shrink:0;display:flex;flex-direction:column;gap:16px;
+  scrollbar-width:thin;
+}
+.sales-main{flex:1;overflow-y:auto;padding:22px;scrollbar-width:thin}
+.sales-main::-webkit-scrollbar{width:4px}
+.sales-main::-webkit-scrollbar-thumb{background:var(--border2);border-radius:4px}
+
+/* API connector */
+.api-connector{background:var(--card2);border:1px solid var(--border);border-radius:var(--r2);padding:14px}
+.api-input{
+  width:100%;padding:9px 12px;border-radius:var(--r);border:1px solid var(--border);
+  background:var(--card);color:var(--text);font-size:12px;outline:none;
+  transition:border-color .18s;font-family:'DM Mono',monospace;margin-bottom:8px;
+}
+.api-input:focus{border-color:var(--accent)}
+.api-input::placeholder{color:var(--text3)}
+.api-connect-btn{
+  width:100%;padding:10px;border-radius:var(--r);border:none;
+  background:linear-gradient(135deg,var(--green),#059669);
+  color:#fff;font-weight:700;font-size:12px;cursor:pointer;
+  transition:all .18s;font-family:'DM Sans',sans-serif;
+}
+.api-connect-btn:hover{filter:brightness(1.1);transform:translateY(-1px)}
+.api-connect-btn:disabled{opacity:.4;cursor:not-allowed;transform:none}
+
+/* View selector */
+.view-pills{display:flex;flex-direction:column;gap:5px}
+.view-pill{
+  padding:9px 12px;border-radius:var(--r);border:1px solid var(--border);
+  background:var(--card2);color:var(--text2);font-size:11px;font-weight:600;
+  cursor:pointer;text-align:left;transition:all .15s;font-family:'DM Sans',sans-serif;
+  display:flex;align-items:center;gap:8px;
+}
+.view-pill:hover{border-color:var(--border2);color:var(--text)}
+.view-pill.active{border-color:var(--accent);color:var(--accent);background:rgba(56,189,248,0.06)}
+.view-pill-icon{font-size:14px;width:18px;text-align:center}
+
+/* Export buttons */
+.export-row{display:flex;flex-direction:column;gap:6px}
+.export-btn{
+  width:100%;padding:9px 12px;border-radius:var(--r);border:1px solid var(--border);
+  background:var(--card2);color:var(--text2);font-size:11px;font-weight:600;
+  cursor:pointer;text-align:left;transition:all .15s;font-family:'DM Sans',sans-serif;
+  display:flex;align-items:center;gap:8px;
+}
+.export-btn:hover{border-color:var(--border2);color:var(--text);background:var(--navy)}
+
+/* KPI row */
+.sales-kpi-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:20px}
+.sales-kpi{
+  background:var(--card);border:1px solid var(--border);border-radius:var(--r2);
+  padding:16px;text-align:center;transition:all .2s;position:relative;overflow:hidden;
+}
+.sales-kpi::before{content:'';position:absolute;inset:0;background:linear-gradient(135deg,rgba(56,189,248,0.03),transparent);pointer-events:none}
+.sales-kpi:hover{border-color:var(--border2);transform:translateY(-2px);box-shadow:0 8px 24px rgba(0,0,0,.2)}
+.sales-kpi-label{font-size:9px;color:var(--text2);text-transform:uppercase;letter-spacing:.12em;font-weight:700;margin-bottom:8px;font-family:'DM Mono',monospace}
+.sales-kpi-value{font-size:22px;font-weight:800;letter-spacing:-.5px;margin-bottom:4px}
+.sales-kpi-sub{font-size:10px;color:var(--text3);font-family:'DM Mono',monospace}
+
+/* Sales chart area */
+.sales-chart-card{
+  background:var(--card);border:1px solid var(--border);border-radius:var(--r2);
+  padding:18px;margin-bottom:16px;transition:border-color .2s;
+}
+.sales-chart-card:hover{border-color:var(--border2)}
+.sales-chart-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}
+.sales-chart-title{font-size:13px;font-weight:700;color:var(--text)}
+.sales-chart-desc{font-size:11px;color:var(--text2);margin-top:3px}
+.sales-chart-wrap{position:relative;height:260px}
+
+/* Sales data table */
+.sales-table-card{background:var(--card);border:1px solid var(--border);border-radius:var(--r2);padding:16px;margin-bottom:16px}
+.sales-table-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+
+/* Sales welcome */
+.sales-welcome{
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  min-height:60vh;text-align:center;gap:12px;padding:40px;
+}
+.sales-welcome-icon{font-size:52px;margin-bottom:8px;filter:drop-shadow(0 0 20px rgba(56,189,248,0.3))}
+.sales-welcome h2{font-size:22px;font-weight:800;letter-spacing:-.4px}
+.sales-welcome p{color:var(--text2);max-width:400px;line-height:1.8;font-size:13px}
+.sales-welcome-tips{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:20px;max-width:500px;width:100%}
+.sales-tip{background:var(--card);border:1px solid var(--border);border-radius:var(--r2);padding:14px;text-align:left}
+.sales-tip-icon{font-size:20px;margin-bottom:6px}
+.sales-tip-title{font-size:11px;font-weight:700;margin-bottom:3px}
+.sales-tip-desc{font-size:11px;color:var(--text2);line-height:1.5}
+
+/* Audit flags */
+.audit-flags{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:10px;margin-bottom:16px}
+.audit-flag{
+  background:var(--card);border:1px solid var(--border);border-radius:var(--r2);
+  padding:14px;display:flex;gap:12px;align-items:flex-start;transition:border-color .2s;
+}
+.audit-flag:hover{border-color:var(--border2)}
+.flag-bar{width:3px;border-radius:2px;flex-shrink:0;align-self:stretch;min-height:36px}
+.flag-bar.red{background:var(--red)}.flag-bar.warn{background:var(--warn)}.flag-bar.green{background:var(--green)}
+.flag-sev{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;margin-bottom:3px;font-family:'DM Mono',monospace}
+.flag-sev.red{color:var(--red)}.flag-sev.warn{color:var(--warn)}.flag-sev.green{color:var(--green)}
+.flag-title{font-size:12px;font-weight:700;margin-bottom:4px;color:var(--text)}
+.flag-body{font-size:11px;color:var(--text2);line-height:1.6}
+
 /* ── RESPONSIVE ── */
 @media(max-width:960px){
   .sidebar{--sidebar:220px}
@@ -463,7 +619,9 @@ tr:hover td{background:rgba(255,255,255,.015)}
 }
 @media(max-width:768px){
   .sidebar{display:none}
-  .top-tabs{gap:2px}
+  .sales-sidebar{display:none}
+  .sales-kpi-row{grid-template-columns:repeat(2,1fr)}
+  .sales-welcome-tips{grid-template-columns:1fr}
   .top-tab{padding:6px 10px;font-size:11px}
   .brand-name{font-size:15px}
   .brand-badge{display:none}
@@ -545,6 +703,7 @@ tr:hover td{background:rgba(255,255,255,.015)}
       <button class="top-tab" onclick="switchMode('audit',this)">🔍 <span>Audit</span></button>
       <button class="top-tab" onclick="switchMode('fraud',this)">🛡 <span>Fraud</span></button>
       <button class="top-tab" onclick="switchMode('tax',this)">📋 <span>Tax</span></button>
+      <button class="top-tab" onclick="switchMode('sales',this)">💰 <span>Sales Audit</span></button>
       <button class="top-tab" onclick="switchMode('ai',this)">🧠 <span>AI Explain</span></button>
     </div>
 
@@ -666,10 +825,13 @@ tr:hover td{background:rgba(255,255,255,.015)}
 
             <div class="narrative-card" id="narCard" style="display:none">
               <div class="nar-header">
-                <div class="nar-label" id="narLabel">AI Analysis</div>
+                <div class="nar-header-left">
+                  <div class="nar-label" id="narLabel">AI Analysis Narrative</div>
+                  <div class="nar-title" id="narTitle">Financial Analysis Report</div>
+                </div>
                 <div id="narBadge"></div>
               </div>
-              <div class="nar-body" id="narText"></div>
+              <div id="narText"></div>
             </div>
 
             <div class="section-wrap" id="insSection" style="display:none">
@@ -832,6 +994,134 @@ Examples:
           <div class="audit-input-bar">
             <textarea id="aiInp" rows="2" placeholder="Ask me to explain any audit or accounting concept..."></textarea>
             <button class="audit-send-btn" onclick="aiSend()">Explain</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- SALES AUDIT MODE -->
+      <div class="mode-panel" id="panel-sales">
+        <div class="sales-layout">
+
+          <!-- SALES SIDEBAR -->
+          <div class="sales-sidebar">
+            <div>
+              <div class="slabel">API Connector</div>
+              <div class="api-connector">
+                <input class="api-input" type="text" id="salesApiUrl" placeholder="e.g. https://api.stripe.com/…" />
+                <button class="api-connect-btn" id="salesConnectBtn" onclick="salesFetchData()">⚡ Connect &amp; Load</button>
+              </div>
+            </div>
+
+            <div>
+              <div class="slabel">Chart View</div>
+              <div class="view-pills">
+                <button class="view-pill active" onclick="salesSetView('region',this)"><span class="view-pill-icon">🗺</span>By Region</button>
+                <button class="view-pill" onclick="salesSetView('product',this)"><span class="view-pill-icon">📦</span>By Product</button>
+                <button class="view-pill" onclick="salesSetView('time',this)"><span class="view-pill-icon">📅</span>Time Trend</button>
+                <button class="view-pill" onclick="salesSetView('audit',this)"><span class="view-pill-icon">🛡</span>Audit Flags</button>
+              </div>
+            </div>
+
+            <div>
+              <div class="slabel">Export</div>
+              <div class="export-row">
+                <button class="export-btn" onclick="salesExportPDF()"><span class="view-pill-icon">📄</span>Export PDF Report</button>
+                <button class="export-btn" onclick="salesExportCSV()"><span class="view-pill-icon">📊</span>Export CSV Data</button>
+              </div>
+            </div>
+
+            <div>
+              <div class="slabel">Sample Data</div>
+              <div class="export-row">
+                <button class="export-btn" onclick="salesLoadSample('retail')"><span class="view-pill-icon">🛍</span>Retail Sample</button>
+                <button class="export-btn" onclick="salesLoadSample('saas')"><span class="view-pill-icon">💻</span>SaaS Sample</button>
+                <button class="export-btn" onclick="salesLoadSample('fmcg')"><span class="view-pill-icon">🏪</span>FMCG Sample</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- SALES MAIN CONTENT -->
+          <div class="sales-main" id="salesMain">
+
+            <!-- Welcome -->
+            <div class="sales-welcome" id="salesWelcome">
+              <div class="sales-welcome-icon">💰</div>
+              <h2>Sales Audit &amp; BI Dashboard</h2>
+              <p>Connect your sales API, or load a sample dataset to run a full sales audit — KPIs, charts, anomaly detection, and exportable PDF/CSV reports.</p>
+              <div class="sales-welcome-tips">
+                <div class="sales-tip"><div class="sales-tip-icon">🔌</div><div class="sales-tip-title">API Connect</div><div class="sales-tip-desc">Pull live data from Stripe, your ERP or CRM directly</div></div>
+                <div class="sales-tip"><div class="sales-tip-icon">📊</div><div class="sales-tip-title">4 Chart Views</div><div class="sales-tip-desc">Region, product, time trend and audit flag views</div></div>
+                <div class="sales-tip"><div class="sales-tip-icon">🛡</div><div class="sales-tip-title">Audit Flags</div><div class="sales-tip-desc">Auto-detection of outliers, drops and anomalies</div></div>
+                <div class="sales-tip"><div class="sales-tip-icon">📄</div><div class="sales-tip-title">Export</div><div class="sales-tip-desc">Full PDF report or raw CSV in one click</div></div>
+              </div>
+            </div>
+
+            <!-- Dashboard (shown after data loads) -->
+            <div id="salesDashboard" style="display:none">
+
+              <!-- KPIs -->
+              <div class="sales-kpi-row">
+                <div class="sales-kpi">
+                  <div class="sales-kpi-label">Total Revenue</div>
+                  <div class="sales-kpi-value" id="skpiTotal" style="color:var(--green)">—</div>
+                  <div class="sales-kpi-sub" id="skpiTotalSub">all records</div>
+                </div>
+                <div class="sales-kpi">
+                  <div class="sales-kpi-label">Avg Revenue</div>
+                  <div class="sales-kpi-value" id="skpiAvg" style="color:var(--accent)">—</div>
+                  <div class="sales-kpi-sub">per period</div>
+                </div>
+                <div class="sales-kpi">
+                  <div class="sales-kpi-label">Growth Rate</div>
+                  <div class="sales-kpi-value" id="skpiGrowth">—</div>
+                  <div class="sales-kpi-sub">first → last</div>
+                </div>
+                <div class="sales-kpi">
+                  <div class="sales-kpi-label">Peak Revenue</div>
+                  <div class="sales-kpi-value" id="skpiPeak" style="color:var(--accent2)">—</div>
+                  <div class="sales-kpi-sub" id="skpiPeakSub">highest period</div>
+                </div>
+                <div class="sales-kpi">
+                  <div class="sales-kpi-label">Records</div>
+                  <div class="sales-kpi-value" id="skpiCount" style="color:var(--text2)">—</div>
+                  <div class="sales-kpi-sub">data points</div>
+                </div>
+              </div>
+
+              <!-- Chart -->
+              <div class="sales-chart-card">
+                <div class="sales-chart-header">
+                  <div>
+                    <div class="sales-chart-title" id="salesChartTitle">Revenue Overview</div>
+                    <div class="sales-chart-desc" id="salesChartDesc">Select a view from the sidebar</div>
+                  </div>
+                  <div id="salesChartBadge"></div>
+                </div>
+                <div class="sales-chart-wrap">
+                  <canvas id="salesChart"></canvas>
+                </div>
+              </div>
+
+              <!-- Audit flags -->
+              <div id="salesFlagsSection" style="display:none">
+                <div class="section-head">
+                  <div class="section-title">Audit Flags</div>
+                  <div class="section-line"></div>
+                  <div class="section-count" id="salesFlagsCount"></div>
+                </div>
+                <div class="audit-flags" id="salesFlagsGrid"></div>
+              </div>
+
+              <!-- Data preview table -->
+              <div class="sales-table-card">
+                <div class="sales-table-header">
+                  <div class="section-title" style="font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.12em;color:var(--text2);font-family:'DM Mono',monospace">Data Preview</div>
+                  <div class="sales-kpi-sub" id="salesTableMeta"></div>
+                </div>
+                <div id="salesDataTable"></div>
+              </div>
+
+            </div>
           </div>
         </div>
       </div>
@@ -1217,15 +1507,76 @@ function renderNar(txt, provider) {
   const card = document.getElementById('narCard');
   if (!txt) { card.style.display='none'; return; }
   card.style.display = 'block';
-  const p    = PROVIDERS[provider] || PROVIDERS.statistical;
-  card.style.borderLeftColor = p.color;
+
+  const p = PROVIDERS[provider] || PROVIDERS.statistical;
+
+  // Accent colour on the left bar via CSS variable override
+  card.style.setProperty('--nar-accent', p.color);
+  card.querySelector('.narrative-card::before'); // trigger repaint
   document.getElementById('narLabel').style.color = p.color;
+
+  // Provider badge
   document.getElementById('narBadge').innerHTML =
-    `<div class="provider-badge ${p.cls}"><div class="pb-dot" style="background:${p.color}"></div>${p.label}</div>`;
-  // Render markdown-style bold headings
-  const html = txt
-    .replace(/\*\*(.+?)\*\*/g, '<strong style="color:var(--text);font-size:14px;display:block;margin-top:16px;margin-bottom:6px;letter-spacing:-.2px">$1</strong>')
-    .replace(/\n/g, '<br>');
+    `<div class="provider-badge ${p.cls}">
+       <div class="pb-dot" style="background:${p.color}"></div>${p.label}
+     </div>`;
+
+  // ── Parse and render the narrative beautifully ───────────────────────────
+  // Split on section headings (**Heading**) and plain newlines
+  const sections = txt.split(/\*\*(.+?)\*\*/g);
+  // sections alternates: [pre-text, heading, body, heading, body, ...]
+
+  let html = '';
+  let isFirst = true;
+
+  // Helper: wrap a block of text as styled paragraphs
+  function wrapParas(rawText, isFirstBlock) {
+    const paras = rawText
+      .split(/\n{1,}/)
+      .map(s => s.trim())
+      .filter(s => s.length > 0);
+
+    return paras.map((para, i) => {
+      // Highlight numbers: currency, percentages, large figures
+      const highlighted = para
+        .replace(/(GHS\s?[\d,]+(?:\.\d+)?(?:M|K|B)?)/g,
+          '<span class="nar-num">$1</span>')
+        .replace(/([\d,]+(?:\.\d+)?%)/g,
+          '<span class="nar-num">$1</span>')
+        .replace(/(\b\d{1,3}(?:,\d{3})+(?:\.\d+)?)/g,
+          '<span class="nar-num">$1</span>');
+
+      const dropClass = (isFirstBlock && i === 0) ? ' drop-cap' : '';
+      return `<p class="nar-para${dropClass}" style="font-family:'Lora',Georgia,serif">${highlighted}</p>`;
+    }).join('');
+  }
+
+  if (sections.length <= 1) {
+    // No headings found — render as plain paragraphs
+    html = wrapParas(txt, true);
+  } else {
+    // Pre-heading text (if any)
+    if (sections[0].trim()) {
+      html += wrapParas(sections[0], true);
+      isFirst = false;
+    }
+    // Alternating: heading, body pairs
+    for (let i = 1; i < sections.length; i += 2) {
+      const heading = sections[i];
+      const body    = sections[i+1] || '';
+      html += `<span class="nar-section-heading" style="color:${p.color}">${heading}</span>`;
+      html += wrapParas(body, isFirst);
+      isFirst = false;
+    }
+  }
+
+  // Set the narrative title from the first heading found
+  const firstHeading = txt.match(/\*\*(.+?)\*\*/);
+  if (firstHeading) {
+    document.getElementById('narTitle').textContent =
+      firstHeading[1].replace('**','').trim();
+  }
+
   document.getElementById('narText').innerHTML = html;
 }
 
@@ -1467,6 +1818,439 @@ function toast(msg, type='') {
   t.textContent = msg; t.className = 'toast '+type+' on';
   setTimeout(() => t.classList.remove('on'), 4200);
 }
+
+// ══════════════════════════════════════════════════════════════════════════
+// ── SALES AUDIT MODULE ────────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════
+
+let salesData       = [];
+let salesChartInst  = null;
+let salesCurrentView= 'region';
+
+// ── Sample datasets ────────────────────────────────────────────────────────
+const SALES_SAMPLES = {
+  retail: [
+    {period:'Jan',product:'Apparel',region:'North',revenue:42000,units:840,returns:1260,discount_pct:8},
+    {period:'Feb',product:'Apparel',region:'South',revenue:38000,units:760,returns:1140,discount_pct:9},
+    {period:'Mar',product:'Electronics',region:'North',revenue:91000,units:455,returns:2730,discount_pct:5},
+    {period:'Apr',product:'Electronics',region:'East',revenue:76000,units:380,returns:2280,discount_pct:6},
+    {period:'May',product:'Groceries',region:'West',revenue:55000,units:2200,returns:550,discount_pct:3},
+    {period:'Jun',product:'Apparel',region:'North',revenue:48000,units:960,returns:1440,discount_pct:10},
+    {period:'Jul',product:'Electronics',region:'South',revenue:112000,units:560,returns:3360,discount_pct:4},
+    {period:'Aug',product:'Groceries',region:'East',revenue:61000,units:2440,returns:610,discount_pct:2},
+    {period:'Sep',product:'Apparel',region:'West',revenue:53000,units:1060,returns:1590,discount_pct:7},
+    {period:'Oct',product:'Electronics',region:'North',revenue:98000,units:490,returns:2940,discount_pct:5},
+    {period:'Nov',product:'Groceries',region:'South',revenue:72000,units:2880,returns:720,discount_pct:3},
+    {period:'Dec',product:'Electronics',region:'East',revenue:145000,units:725,returns:4350,discount_pct:6},
+  ],
+  saas: [
+    {period:'Jan',product:'Starter',region:'EMEA',revenue:28000,units:560,returns:280,discount_pct:5},
+    {period:'Feb',product:'Pro',region:'APAC',revenue:64000,units:320,returns:1280,discount_pct:8},
+    {period:'Mar',product:'Enterprise',region:'Americas',revenue:180000,units:90,returns:3600,discount_pct:12},
+    {period:'Apr',product:'Starter',region:'EMEA',revenue:31000,units:620,returns:310,discount_pct:5},
+    {period:'May',product:'Pro',region:'Americas',revenue:71000,units:355,returns:1420,discount_pct:7},
+    {period:'Jun',product:'Enterprise',region:'APAC',revenue:210000,units:105,returns:4200,discount_pct:10},
+    {period:'Jul',product:'Starter',region:'Americas',revenue:29000,units:580,returns:290,discount_pct:4},
+    {period:'Aug',product:'Pro',region:'EMEA',revenue:68000,units:340,returns:1360,discount_pct:9},
+    {period:'Sep',product:'Enterprise',region:'Americas',revenue:195000,units:97,returns:3900,discount_pct:11},
+    {period:'Oct',product:'Pro',region:'APAC',revenue:74000,units:370,returns:1480,discount_pct:6},
+    {period:'Nov',product:'Enterprise',region:'EMEA',revenue:225000,units:112,returns:4500,discount_pct:13},
+    {period:'Dec',product:'Starter',region:'Americas',revenue:35000,units:700,returns:350,discount_pct:5},
+  ],
+  fmcg: [
+    {period:'Q1-2023',product:'Beverages',region:'Ghana',revenue:320000,units:64000,returns:3200,discount_pct:4},
+    {period:'Q2-2023',product:'Snacks',region:'Nigeria',revenue:285000,units:57000,returns:2850,discount_pct:5},
+    {period:'Q3-2023',product:'Beverages',region:'Kenya',revenue:410000,units:82000,returns:4100,discount_pct:3},
+    {period:'Q4-2023',product:'Dairy',region:'Ghana',revenue:375000,units:75000,returns:3750,discount_pct:6},
+    {period:'Q1-2024',product:'Snacks',region:'Nigeria',revenue:298000,units:59600,returns:2980,discount_pct:4},
+    {period:'Q2-2024',product:'Dairy',region:'Kenya',revenue:440000,units:88000,returns:4400,discount_pct:5},
+    {period:'Q3-2024',product:'Beverages',region:'Ghana',revenue:390000,units:78000,returns:3900,discount_pct:3},
+    {period:'Q4-2024',product:'Snacks',region:'Nigeria',revenue:510000,units:102000,returns:5100,discount_pct:7},
+  ],
+};
+
+// ── Load sample ────────────────────────────────────────────────────────────
+function salesLoadSample(type) {
+  salesData = SALES_SAMPLES[type] || [];
+  salesShowDashboard();
+  salesRenderAll();
+  toast('Loaded '+type+' sample — '+salesData.length+' records', 'ok');
+}
+
+// ── Fetch from external API ────────────────────────────────────────────────
+async function salesFetchData() {
+  const url = document.getElementById('salesApiUrl').value.trim();
+  if (!url) { toast('Enter an API URL first', 'err'); return; }
+  const btn = document.getElementById('salesConnectBtn');
+  btn.disabled = true; btn.textContent = 'Connecting…';
+  try {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const json = await res.json();
+    salesData = Array.isArray(json) ? json : json.data || json.results || Object.values(json);
+    if (!salesData.length) throw new Error('No records found in response');
+    salesShowDashboard();
+    salesRenderAll();
+    toast('Connected — ' + salesData.length + ' records loaded', 'ok');
+  } catch(e) {
+    toast('Connection failed: ' + e.message, 'err');
+  }
+  btn.disabled = false; btn.textContent = '⚡ Connect & Load';
+}
+
+// ── Show dashboard ─────────────────────────────────────────────────────────
+function salesShowDashboard() {
+  document.getElementById('salesWelcome').style.display   = 'none';
+  document.getElementById('salesDashboard').style.display = 'block';
+  document.getElementById('salesMain').scrollTop = 0;
+}
+
+// ── Render everything ──────────────────────────────────────────────────────
+function salesRenderAll() {
+  salesComputeKPIs();
+  salesRenderChart();
+  salesRenderAuditFlags();
+  salesRenderTable();
+}
+
+// ── KPI computation ────────────────────────────────────────────────────────
+function salesComputeKPIs() {
+  const revs  = salesData.map(d => Number(d.revenue)||0);
+  const total = revs.reduce((a,b)=>a+b, 0);
+  const avg   = total / revs.length;
+  const peak  = Math.max(...revs);
+  const peakRow = salesData[revs.indexOf(peak)];
+  const growth = revs.length > 1
+    ? ((revs[revs.length-1] - revs[0]) / (revs[0]||1) * 100)
+    : 0;
+
+  document.getElementById('skpiTotal').textContent     = salesFmt(total);
+  document.getElementById('skpiTotalSub').textContent  = salesData.length + ' records';
+  document.getElementById('skpiAvg').textContent       = salesFmt(avg);
+  document.getElementById('skpiPeak').textContent      = salesFmt(peak);
+  document.getElementById('skpiPeakSub').textContent   = peakRow?.period || '—';
+  document.getElementById('skpiCount').textContent     = salesData.length;
+
+  const gEl   = document.getElementById('skpiGrowth');
+  gEl.textContent  = (growth >= 0 ? '+' : '') + growth.toFixed(1) + '%';
+  gEl.style.color  = growth >= 0 ? 'var(--green)' : 'var(--red)';
+}
+
+function salesFmt(n) {
+  if (n >= 1000000) return (n/1000000).toFixed(2) + 'M';
+  if (n >= 1000)    return (n/1000).toFixed(1) + 'K';
+  return n.toFixed(0);
+}
+
+// ── Set chart view ─────────────────────────────────────────────────────────
+function salesSetView(view, btn) {
+  salesCurrentView = view;
+  document.querySelectorAll('.view-pill').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  if (!salesData.length) { toast('Load data first', 'err'); return; }
+  salesRenderChart();
+  // Show/hide flags section
+  document.getElementById('salesFlagsSection').style.display = view === 'audit' ? 'block' : 'none';
+}
+
+// ── Chart renderer ─────────────────────────────────────────────────────────
+function salesRenderChart() {
+  if (salesChartInst) { salesChartInst.destroy(); salesChartInst = null; }
+
+  const isDark   = !document.body.classList.contains('theme-light');
+  const gridColor= isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.06)';
+  const textColor= isDark ? '#5a7090' : '#64748b';
+  const ctx = document.getElementById('salesChart').getContext('2d');
+
+  const chartDefaults = {
+    responsive: true, maintainAspectRatio: false,
+    plugins: {
+      legend: { labels: { color: textColor, font: { family: 'DM Mono', size: 11 }, boxWidth: 12 } },
+      tooltip: {
+        backgroundColor: isDark ? '#0f1422' : '#fff',
+        titleColor: isDark ? '#e2eaf8' : '#0f172a',
+        bodyColor: textColor,
+        borderColor: isDark ? 'rgba(99,179,237,0.2)' : 'rgba(0,0,0,0.1)',
+        borderWidth: 1,
+        padding: 10,
+        callbacks: { label: ctx => ' ' + salesFmt(Number(ctx.raw)) }
+      }
+    },
+    scales: {
+      x: { ticks: { color: textColor, font: { family: 'DM Mono', size: 10 } }, grid: { color: gridColor } },
+      y: { ticks: { color: textColor, font: { family: 'DM Mono', size: 10 }, callback: v => salesFmt(v) }, grid: { color: gridColor } }
+    }
+  };
+
+  if (salesCurrentView === 'time') {
+    // Line chart: revenue over time
+    document.getElementById('salesChartTitle').textContent = 'Revenue Over Time';
+    document.getElementById('salesChartDesc').textContent  = 'Period-by-period revenue trend with anomaly highlighting';
+    const labels = salesData.map(d => d.period || d.month || d.quarter || '—');
+    const revs   = salesData.map(d => Number(d.revenue)||0);
+    const mean   = revs.reduce((a,b)=>a+b,0)/revs.length;
+    const std    = Math.sqrt(revs.reduce((a,b)=>a+(b-mean)**2,0)/revs.length);
+    const bgColors = revs.map(v => Math.abs(v-mean) > 2*std ? 'rgba(248,113,113,0.8)' : 'rgba(56,189,248,0.8)');
+    salesChartInst = new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels,
+        datasets: [{
+          label: 'Revenue',
+          data: revs,
+          borderColor: '#38bdf8',
+          backgroundColor: 'rgba(56,189,248,0.08)',
+          pointBackgroundColor: bgColors,
+          pointBorderColor: bgColors,
+          pointRadius: 5,
+          tension: 0.4,
+          fill: true,
+        }]
+      },
+      options: chartDefaults,
+    });
+
+  } else if (salesCurrentView === 'region') {
+    // Bar chart grouped by region
+    document.getElementById('salesChartTitle').textContent = 'Revenue by Region';
+    document.getElementById('salesChartDesc').textContent  = 'Total revenue aggregated per sales region';
+    const grouped = {};
+    salesData.forEach(d => { const k = d.region||'Unknown'; grouped[k] = (grouped[k]||0) + (Number(d.revenue)||0); });
+    const regionColors = ['#38bdf8','#818cf8','#34d399','#fbbf24','#f87171','#c084fc'];
+    salesChartInst = new Chart(ctx, {
+      type: 'bar',
+      data: {
+        labels: Object.keys(grouped),
+        datasets: [{ label: 'Revenue', data: Object.values(grouped), backgroundColor: Object.keys(grouped).map((_,i)=>regionColors[i%regionColors.length]), borderRadius: 6 }]
+      },
+      options: {...chartDefaults, plugins: {...chartDefaults.plugins, legend: {display: false}}},
+    });
+
+  } else if (salesCurrentView === 'product') {
+    // Doughnut chart by product
+    document.getElementById('salesChartTitle').textContent = 'Revenue by Product';
+    document.getElementById('salesChartDesc').textContent  = 'Revenue share breakdown across product lines';
+    const grouped = {};
+    salesData.forEach(d => { const k = d.product||'Unknown'; grouped[k] = (grouped[k]||0) + (Number(d.revenue)||0); });
+    const productColors = ['#38bdf8','#818cf8','#34d399','#fbbf24','#f87171','#c084fc','#fb923c'];
+    salesChartInst = new Chart(ctx, {
+      type: 'doughnut',
+      data: {
+        labels: Object.keys(grouped),
+        datasets: [{ data: Object.values(grouped), backgroundColor: productColors, borderWidth: 2, borderColor: isDark ? '#0f1422' : '#fff', hoverOffset: 8 }]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: {
+          legend: { position: 'right', labels: { color: textColor, font: { family: 'DM Mono', size: 11 }, padding: 16 } },
+          tooltip: { ...chartDefaults.plugins.tooltip, callbacks: { label: ctx => ' ' + ctx.label + ': ' + salesFmt(ctx.raw) } }
+        }
+      },
+    });
+
+  } else if (salesCurrentView === 'audit') {
+    // Bar chart highlighting outliers
+    document.getElementById('salesChartTitle').textContent = 'Revenue — Anomaly Scan';
+    document.getElementById('salesChartDesc').textContent  = 'Red bars = statistical outliers (> 2σ from mean). Review these periods.';
+    const labels = salesData.map(d => d.period || d.month || d.quarter || '—');
+    const revs   = salesData.map(d => Number(d.revenue)||0);
+    const mean   = revs.reduce((a,b)=>a+b,0)/revs.length;
+    const std    = Math.sqrt(revs.reduce((a,b)=>a+(b-mean)**2,0)/revs.length);
+    salesChartInst = new Chart(ctx, {
+      type: 'bar',
+      data: {
+        labels,
+        datasets: [{
+          label: 'Revenue',
+          data: revs,
+          backgroundColor: revs.map(v => Math.abs(v-mean)>2*std ? 'rgba(248,113,113,0.85)' : 'rgba(56,189,248,0.7)'),
+          borderRadius: 5,
+        }]
+      },
+      options: {...chartDefaults, plugins: {...chartDefaults.plugins, legend: {display:false}}},
+    });
+  }
+}
+
+// ── Audit flag detection ───────────────────────────────────────────────────
+function salesRenderAuditFlags() {
+  const flags = [];
+  const revs  = salesData.map(d => Number(d.revenue)||0);
+  const mean  = revs.reduce((a,b)=>a+b,0)/revs.length;
+  const std   = Math.sqrt(revs.reduce((a,b)=>a+(b-mean)**2,0)/revs.length);
+
+  // Outliers
+  salesData.forEach((d, i) => {
+    const r = Number(d.revenue)||0;
+    if (Math.abs(r-mean) > 2.5*std) {
+      flags.push({
+        type: 'red', sev: 'Action Required',
+        title: 'Revenue outlier — ' + (d.period||d.month||'Period '+(i+1)),
+        body: 'Revenue of ' + salesFmt(r) + ' deviates ' + (((r-mean)/mean)*100).toFixed(0) + '% from the mean (' + salesFmt(mean) + '). Verify against source records and supporting documentation before audit sign-off.',
+      });
+    }
+  });
+
+  // High discount
+  salesData.forEach((d, i) => {
+    const disc = Number(d.discount_pct)||0;
+    if (disc > 12) {
+      flags.push({
+        type: 'warn', sev: 'Needs Attention',
+        title: 'High discount rate — ' + (d.period||d.month||'Period '+(i+1)),
+        body: 'Discount rate of ' + disc + '% for ' + (d.product||'this product') + ' exceeds the 12% threshold. Excessive discounting may signal margin erosion or unauthorised concessions.',
+      });
+    }
+  });
+
+  // High returns
+  salesData.forEach((d, i) => {
+    const ret  = Number(d.returns)||0;
+    const rev  = Number(d.revenue)||0;
+    const ratio= rev > 0 ? ret/rev*100 : 0;
+    if (ratio > 5) {
+      flags.push({
+        type: 'warn', sev: 'Needs Attention',
+        title: 'High returns ratio — ' + (d.period||d.month||'Period '+(i+1)),
+        body: 'Returns represent ' + ratio.toFixed(1) + '% of revenue for ' + (d.product||'this product') + '. A ratio above 5% may indicate product quality issues, misrepresentation, or fraudulent reversals.',
+      });
+    }
+  });
+
+  // Period-on-period drop
+  for (let i = 1; i < revs.length; i++) {
+    const drop = (revs[i]-revs[i-1])/revs[i-1]*100;
+    if (drop < -25) {
+      flags.push({
+        type: 'warn', sev: 'Needs Attention',
+        title: 'Sharp revenue drop — ' + (salesData[i].period||salesData[i].month||'Period '+(i+1)),
+        body: 'Revenue fell ' + Math.abs(drop).toFixed(1) + '% compared to the prior period. Investigate whether this reflects a genuine business decline or a data integrity issue.',
+      });
+    }
+  }
+
+  // No flags
+  if (!flags.length) {
+    flags.push({
+      type: 'green', sev: 'All Clear',
+      title: 'No audit flags detected',
+      body: 'All revenue records fall within expected statistical bounds. No unusual discounts, returns, or period-on-period drops were detected in this dataset.',
+    });
+  }
+
+  document.getElementById('salesFlagsSection').style.display = 'block';
+  document.getElementById('salesFlagsCount').textContent = flags.length + ' flag' + (flags.length!==1?'s':'');
+  document.getElementById('salesFlagsGrid').innerHTML = flags.map(f => `
+    <div class="audit-flag">
+      <div class="flag-bar ${f.type}"></div>
+      <div>
+        <div class="flag-sev ${f.type}">${f.sev}</div>
+        <div class="flag-title">${f.title}</div>
+        <div class="flag-body">${f.body}</div>
+      </div>
+    </div>`).join('');
+}
+
+// ── Data table ─────────────────────────────────────────────────────────────
+function salesRenderTable() {
+  const rows = salesData.slice(0, 10);
+  if (!rows.length) return;
+  const cols = Object.keys(rows[0]);
+  document.getElementById('salesTableMeta').textContent =
+    'Showing ' + rows.length + ' of ' + salesData.length + ' records';
+  document.getElementById('salesDataTable').innerHTML =
+    `<div class="table-wrap"><table>
+      <thead><tr>${cols.map(c=>`<th>${c.replace(/_/g,' ')}</th>`).join('')}</tr></thead>
+      <tbody>${rows.map(r=>`<tr>${cols.map(c=>`<td>${r[c]!=null?r[c]:''}</td>`).join('')}</tr>`).join('')}</tbody>
+    </table></div>`;
+}
+
+// ── Export PDF ─────────────────────────────────────────────────────────────
+function salesExportPDF() {
+  if (!salesData.length) { toast('Load data before exporting', 'err'); return; }
+  const { jsPDF } = window.jspdf;
+  const doc  = new jsPDF();
+  const revs = salesData.map(d=>Number(d.revenue)||0);
+  const total= revs.reduce((a,b)=>a+b,0);
+  const avg  = total/revs.length;
+  const growth=revs.length>1?((revs[revs.length-1]-revs[0])/(revs[0]||1)*100):0;
+  const now  = new Date().toLocaleDateString('en-GB',{day:'numeric',month:'long',year:'numeric'});
+
+  doc.setFillColor(7, 9, 15); doc.rect(0,0,210,297,'F');
+
+  // Header
+  doc.setFillColor(11,14,24); doc.rect(0,0,210,40,'F');
+  doc.setFontSize(20); doc.setTextColor(56,189,248);
+  doc.text('DataMind Audit AI Elite', 14, 18);
+  doc.setFontSize(11); doc.setTextColor(90,112,144);
+  doc.text('Sales Audit Report  ·  Generated: ' + now, 14, 28);
+
+  // KPIs
+  doc.setFontSize(10); doc.setTextColor(30,45,69);
+  doc.text('KEY PERFORMANCE INDICATORS', 14, 52);
+  doc.setDrawColor(30,45,69); doc.line(14,54,196,54);
+
+  const kpis = [
+    ['Total Revenue', salesFmt(total)],
+    ['Average Revenue', salesFmt(avg)],
+    ['Growth Rate', (growth>=0?'+':'')+growth.toFixed(1)+'%'],
+    ['Records Analysed', salesData.length.toString()],
+  ];
+  doc.setFontSize(11);
+  kpis.forEach(([label, value], i) => {
+    const x = 14 + (i % 2) * 96, y = 64 + Math.floor(i/2) * 16;
+    doc.setTextColor(90,112,144); doc.text(label, x, y);
+    doc.setTextColor(226,234,248); doc.text(value, x+60, y);
+  });
+
+  // Summary narrative
+  doc.setFontSize(10); doc.setTextColor(30,45,69);
+  doc.text('EXECUTIVE SUMMARY', 14, 104);
+  doc.setDrawColor(30,45,69); doc.line(14,106,196,106);
+  doc.setFontSize(10); doc.setTextColor(90,112,144);
+  const summary = `This sales audit report covers ${salesData.length} records across the period under review. Total revenue stands at ${salesFmt(total)}, with an average of ${salesFmt(avg)} per period. The growth rate from the opening to the closing period is ${(growth>=0?'+':'')+growth.toFixed(1)}%. All records have been screened for anomalies using statistical methods.`;
+  const sumLines = doc.splitTextToSize(summary, 182);
+  doc.text(sumLines, 14, 114);
+
+  // Data preview
+  let y = 114 + sumLines.length * 5 + 12;
+  doc.setFontSize(10); doc.setTextColor(30,45,69);
+  doc.text('DATA PREVIEW (first 10 records)', 14, y); y += 4;
+  doc.setDrawColor(30,45,69); doc.line(14, y, 196, y); y += 6;
+
+  const cols = Object.keys(salesData[0]).slice(0, 5);
+  doc.setFontSize(8); doc.setTextColor(56,189,248);
+  cols.forEach((c, i) => doc.text(c.replace(/_/g,' ').toUpperCase(), 14 + i*36, y));
+  y += 6;
+  doc.setTextColor(226,234,248);
+  salesData.slice(0,10).forEach(row => {
+    if (y > 270) return;
+    cols.forEach((c, i) => doc.text(String(row[c]||'').substring(0,12), 14 + i*36, y));
+    y += 6;
+  });
+
+  // Footer
+  doc.setFontSize(8); doc.setTextColor(30,45,69);
+  doc.text('DataMind Audit AI Elite  ·  Confidential  ·  ' + now, 14, 290);
+
+  doc.save('DataMind_Sales_Audit_Report.pdf');
+  toast('PDF exported successfully', 'ok');
+}
+
+// ── Export CSV ─────────────────────────────────────────────────────────────
+function salesExportCSV() {
+  if (!salesData.length) { toast('Load data before exporting', 'err'); return; }
+  const cols = Object.keys(salesData[0]);
+  let csv = cols.join(',') + '\n';
+  salesData.forEach(d => { csv += cols.map(c => `"${d[c]??''}"`).join(',') + '\n'; });
+  const blob = new Blob([csv], {type:'text/csv'});
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href = url; a.download = 'DataMind_Sales_Data.csv'; a.click();
+  URL.revokeObjectURL(url);
+  toast('CSV downloaded', 'ok');
+}
+
 </script>
 </body>
 </html>
