@@ -1,115 +1,124 @@
 """
-DataMind Audit AI Enterprise 3.0
-Single-service deployment — FastAPI serves both the frontend and all API routes.
-
-File layout in your repo:
-  index.html          ← the frontend (served at / and /app)
-  main.py             ← this file
-  Dockerfile
-  railway.toml
-  requirements.txt
-  api/
-    auth_routes.py
-    audit_routes.py
-    report_routes.py
-    analyse_routes.py
-  core/
-    database.py
-    report_engine.py
+DataMind Agent v2 — Main Application
+Full SaaS platform with auth, history, rate limiting, payments, scheduled reports.
 """
-
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
-from fastapi.staticfiles import StaticFiles
-import os
+from fastapi.responses import JSONResponse
+import uvicorn, logging
 
-from api.auth_routes    import router as auth_router
-from api.audit_routes   import router as audit_router
-from api.report_routes  import router as report_router
-from api.analyse_routes import router as analyse_router
-from core.database      import client as mongo_client
+from app.routers import analysis, pipeline, connectors, upload, export, finance
+from app.routers import auth, history, schedules, payments
+from app.services.auth_service import init_db, get_current_user_optional
+from app.middleware.rate_limit import RateLimitMiddleware
+from config.settings import settings
 
-# ── App ───────────────────────────────────────────────────────────────────────
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+logger = logging.getLogger(__name__)
+
+# Initialise database on startup
+init_db()
+
 app = FastAPI(
-    title="DataMind Audit AI Enterprise 3.0",
-    description="AI-powered audit, fraud detection, and financial analysis platform.",
-    version="3.0.0",
-    docs_url="/api/docs",       # Swagger UI at /api/docs
-    redoc_url="/api/redoc",
+    title="DataMind Agent API",
+    description="""
+## Universal AI Data Analysis Platform
+
+Full SaaS platform with:
+- **Authentication** — JWT login, registration, refresh tokens
+- **Analysis** — AI-powered data analysis across 12 industries
+- **Finance** — Tax, accounting, fraud detection modules
+- **History** — Save and retrieve past analyses
+- **Scheduled Reports** — Automated analysis delivery by email
+- **Payments** — Stripe subscription management
+
+Built by NkaySolutions · Accra, Ghana
+    """,
+    version="2.0.0",
+    docs_url="/docs",
+    redoc_url="/redoc",
 )
 
-# ── CORS ──────────────────────────────────────────────────────────────────────
+# ── CORS — restricted to your frontend ────────────────────────────────────────
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=settings.ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# ── Startup ───────────────────────────────────────────────────────────────────
-@app.on_event("startup")
-async def startup():
-    print("✅ DataMind 3.0 started")
-    print("   MongoDB client:", mongo_client)
-    print("   ANTHROPIC_API_KEY set:", bool(os.environ.get("ANTHROPIC_API_KEY")))
-    print("   GEMINI_API_KEY   set:", bool(os.environ.get("GEMINI_API_KEY")))
+# ── Rate limiting ──────────────────────────────────────────────────────────────
+app.add_middleware(RateLimitMiddleware)
 
-# ── API Routes ────────────────────────────────────────────────────────────────
-app.include_router(auth_router,    prefix="/api/auth",           tags=["Auth"])
-app.include_router(audit_router,   prefix="/api/audit",          tags=["Audit"])
-app.include_router(report_router,  prefix="/api/report",         tags=["Report"])
-app.include_router(analyse_router, prefix="/api/v1/analysis",    tags=["Analysis"])
 
-# ── Health (Railway checks this) ──────────────────────────────────────────────
-@app.get("/health", tags=["System"])
-def health():
-    return {"status": "healthy", "service": "DataMind 3.0"}
+# ── Inject user context into request state ────────────────────────────────────
+@app.middleware("http")
+async def inject_user_context(request: Request, call_next):
+    try:
+        from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+        from app.services.auth_service import verify_access_token, get_user_by_id
+        auth_header = request.headers.get("authorization", "")
+        if auth_header.startswith("Bearer "):
+            token = auth_header[7:]
+            payload = verify_access_token(token)
+            user = get_user_by_id(payload["sub"])
+            if user:
+                request.state.user_id = user.id
+                request.state.plan    = user.plan.value
+    except Exception:
+        pass
+    return await call_next(request)
 
-# ── System info ───────────────────────────────────────────────────────────────
-@app.get("/api/status", tags=["System"])
-def status():
+
+# ── v1 API Routers (existing — backward compatible) ────────────────────────────
+app.include_router(analysis.router,   prefix="/api/v1/analysis",   tags=["Analysis"])
+app.include_router(pipeline.router,   prefix="/api/v1/pipeline",   tags=["Pipeline"])
+app.include_router(connectors.router, prefix="/api/v1/connectors", tags=["Connectors"])
+app.include_router(upload.router,     prefix="/api/v1/upload",     tags=["Upload"])
+app.include_router(export.router,     prefix="/api/v1/export",     tags=["Export"])
+app.include_router(finance.router,    prefix="/api/v1/finance",    tags=["Finance"])
+
+# ── v2 API Routers (new SaaS features) ────────────────────────────────────────
+app.include_router(auth.router,      prefix="/api/v2/auth",      tags=["Auth"])
+app.include_router(history.router,   prefix="/api/v2/history",   tags=["History"])
+app.include_router(schedules.router, prefix="/api/v2/schedules", tags=["Scheduled Reports"])
+app.include_router(payments.router,  prefix="/api/v2/payments",  tags=["Payments"])
+
+
+@app.get("/", tags=["Health"])
+async def root():
     return {
-        "system":  "DataMind Enterprise 3.0",
-        "status":  "LIVE",
-        "ai": {
-            "primary":   "Claude (Anthropic)",
-            "secondary": "Gemini (Google)",
-            "fallback":  "Local statistical engine",
+        "service": "DataMind Agent",
+        "version": "2.0.0",
+        "status": "online",
+        "v1_endpoints": {
+            "analysis":   "/api/v1/analysis",
+            "finance":    "/api/v1/finance",
+            "pipeline":   "/api/v1/pipeline",
+            "upload":     "/api/v1/upload",
+            "export":     "/api/v1/export",
         },
-        "features": [
-            "Multi-Tenant SaaS",
-            "JWT Authentication",
-            "Fraud AI Engine",
-            "Audit Intelligence",
-            "Report Generation",
-            "Claude + Gemini Dual AI",
-        ],
+        "v2_endpoints": {
+            "auth":       "/api/v2/auth",
+            "history":    "/api/v2/history",
+            "schedules":  "/api/v2/schedules",
+            "payments":   "/api/v2/payments",
+        },
+        "docs": "/docs",
     }
 
-# ── Frontend — serve index.html ───────────────────────────────────────────────
-# The HTML file sits in the root of your repo alongside main.py
-FRONTEND = os.path.join(os.path.dirname(__file__), "index.html")
 
-@app.get("/", include_in_schema=False)
-@app.get("/app", include_in_schema=False)
-def serve_frontend():
-    """Serve the DataMind frontend application."""
-    if os.path.exists(FRONTEND):
-        return FileResponse(FRONTEND, media_type="text/html")
-    return {
-        "error": "index.html not found in root directory.",
-        "hint":  "Make sure index.html is in the same folder as main.py",
-    }
+@app.get("/health", tags=["Health"])
+async def health():
+    return {"status": "healthy", "version": "2.0.0"}
 
-# ── Catch-all: send unknown paths back to the frontend ────────────────────────
-@app.get("/{full_path:path}", include_in_schema=False)
-def catch_all(full_path: str):
-    """Any unknown path that doesn't start with /api → return the frontend."""
-    if full_path.startswith("api/"):
-        from fastapi import HTTPException
-        raise HTTPException(status_code=404, detail="API route not found")
-    if os.path.exists(FRONTEND):
-        return FileResponse(FRONTEND, media_type="text/html")
-    return {"error": "Frontend not found"}
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    logger.error(f"Unhandled error on {request.url}: {exc}", exc_info=True)
+    return JSONResponse(status_code=500, content={"error": "Internal server error", "detail": str(exc)})
+
+
+if __name__ == "__main__":
+    uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=True)
