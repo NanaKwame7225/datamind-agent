@@ -1,106 +1,73 @@
+"""
+DataMind Agent — Universal AI Data Analysis Backend
+FastAPI application with full integration stack
+"""
+
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 import uvicorn
 import logging
-import time
-import uuid
 
-from app.routers import analysis, pipeline, connectors, upload, export
+from app.routers import analysis, pipeline, connectors, upload, export, finance
 from config.settings import settings
 
-# =========================
-# LOGGING CONFIG
-# =========================
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] [%(request_id)s] %(message)s"
-)
-logger = logging.getLogger("DataMind")
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+logger = logging.getLogger(__name__)
 
-
-# =========================
-# APP INIT
-# =========================
 app = FastAPI(
     title="DataMind Agent API",
-    description="Enterprise AI Data Intelligence Platform",
-    version="3.0.0",
+    description="Universal AI Data Analysis Platform — Finance, Education, Supply Chain, Mining, Petroleum & more",
+    version="2.4.0",
     docs_url="/docs",
     redoc_url="/redoc",
 )
 
-
-# =========================
-# CORS (PRODUCTION SAFE)
-# =========================
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=getattr(settings, "ALLOWED_ORIGINS", ["*"]),
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-
-# =========================
-# REQUEST TIMING + TRACE ID MIDDLEWARE
-# =========================
-@app.middleware("http")
-async def add_process_time_header(request: Request, call_next):
-    request_id = str(uuid.uuid4())
-    start_time = time.time()
-
-    # attach request id
-    request.state.request_id = request_id
-
-    response = await call_next(request)
-
-    process_time = time.time() - start_time
-
-    response.headers["X-Request-ID"] = request_id
-    response.headers["X-Process-Time"] = str(process_time)
-
-    logger.info(
-        "Request completed",
-        extra={"request_id": request_id}
-    )
-
-    return response
-
-
-# =========================
-# ROUTERS
-# =========================
 app.include_router(analysis.router,   prefix="/api/v1/analysis",   tags=["Analysis"])
 app.include_router(pipeline.router,   prefix="/api/v1/pipeline",   tags=["Pipeline"])
 app.include_router(connectors.router, prefix="/api/v1/connectors", tags=["Connectors"])
 app.include_router(upload.router,     prefix="/api/v1/upload",     tags=["Upload"])
 app.include_router(export.router,     prefix="/api/v1/export",     tags=["Export"])
+app.include_router(finance.router,    prefix="/api/v1/finance",    tags=["Finance"])
 
 
-# =========================
-# LIFECYCLE EVENTS
-# =========================
-@app.on_event("startup")
-async def startup_event():
-    logger.info("DataMind Agent starting up...")
-
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    logger.info("DataMind Agent shutting down...")
-
-
-# =========================
-# HEALTH CHECKS
-# =========================
 @app.get("/", tags=["Health"])
 async def root():
     return {
         "service": "DataMind Agent",
-        "version": app.version,
-        "status": "online"
+        "version": "2.4.0",
+        "status": "online",
+        "modules": {
+            "analysis":   "/api/v1/analysis",
+            "finance":    "/api/v1/finance",
+            "pipeline":   "/api/v1/pipeline",
+            "connectors": "/api/v1/connectors",
+            "upload":     "/api/v1/upload",
+            "export":     "/api/v1/export",
+        },
+        "finance_endpoints": {
+            "tax":        "/api/v1/finance/tax",
+            "accounting": "/api/v1/finance/accounting",
+            "fraud":      "/api/v1/finance/fraud",
+            "full":       "/api/v1/finance/full",
+        },
+        "integrations": {
+            "llm":    ["anthropic", "openai", "gemini", "cohere", "mistral"],
+            "data":   ["pandas", "polars", "numpy", "dask"],
+            "ml":     ["scikit-learn", "xgboost", "lightgbm", "statsmodels"],
+            "db":     ["postgresql", "mysql", "sqlite", "mongodb", "bigquery", "snowflake"],
+            "viz":    ["plotly", "matplotlib", "seaborn", "bokeh"],
+            "mlops":  ["mlflow", "wandb", "dvc"],
+            "vector": ["pinecone", "weaviate", "chroma", "faiss"],
+        },
     }
 
 
@@ -109,44 +76,11 @@ async def health():
     return {"status": "healthy"}
 
 
-@app.get("/ready", tags=["Health"])
-async def readiness():
-    return {
-        "status": "ready",
-        "services": {
-            "api": "up"
-        }
-    }
-
-
-# =========================
-# GLOBAL EXCEPTION HANDLER (SAFE FOR PRODUCTION)
-# =========================
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
+    logger.error(f"Unhandled error: {exc}", exc_info=True)
+    return JSONResponse(status_code=500, content={"error": str(exc)})
 
-    request_id = getattr(request.state, "request_id", "unknown")
 
-    logger.error(
-        f"Unhandled error: {str(exc)}",
-        extra={"request_id": request_id},
-        exc_info=True
-    )
-
-    # IMPORTANT: avoid leaking internal errors in production
-    if getattr(settings, "ENV", "dev") == "prod":
-        return JSONResponse(
-            status_code=500,
-            content={
-                "error": "Internal server error",
-                "request_id": request_id
-            }
-        )
-
-    return JSONResponse(
-        status_code=500,
-        content={
-            "error": str(exc),
-            "request_id": request_id
-        }
-    )
+if __name__ == "__main__":
+    uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=True)
