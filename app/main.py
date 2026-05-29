@@ -1,13 +1,11 @@
 """
-DataMind Agent — Universal AI Data Analysis Backend
-FastAPI application with full integration stack
+DataMind Agent — Main Application
+Universal AI Data Analysis Platform
 """
-
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-import uvicorn
-import logging
+import uvicorn, logging
 
 from app.routers import analysis, pipeline, connectors, upload, export, finance
 from config.settings import settings
@@ -17,8 +15,8 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(
     title="DataMind Agent API",
-    description="Universal AI Data Analysis Platform — Finance, Education, Supply Chain, Mining, Petroleum & more",
-    version="2.4.0",
+    description="Universal AI Data Analysis Platform — Finance, Education, Supply Chain, Mining, Petroleum & more. Built by NkaySolutions.",
+    version="2.0.0",
     docs_url="/docs",
     redoc_url="/redoc",
 )
@@ -31,6 +29,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# ── v1 Routers ────────────────────────────────────────────────────────────────
 app.include_router(analysis.router,   prefix="/api/v1/analysis",   tags=["Analysis"])
 app.include_router(pipeline.router,   prefix="/api/v1/pipeline",   tags=["Pipeline"])
 app.include_router(connectors.router, prefix="/api/v1/connectors", tags=["Connectors"])
@@ -43,9 +42,9 @@ app.include_router(finance.router,    prefix="/api/v1/finance",    tags=["Financ
 async def root():
     return {
         "service": "DataMind Agent",
-        "version": "2.4.0",
+        "version": "2.0.0",
         "status": "online",
-        "modules": {
+        "endpoints": {
             "analysis":   "/api/v1/analysis",
             "finance":    "/api/v1/finance",
             "pipeline":   "/api/v1/pipeline",
@@ -59,27 +58,23 @@ async def root():
             "fraud":      "/api/v1/finance/fraud",
             "full":       "/api/v1/finance/full",
         },
-        "integrations": {
-            "llm":    ["anthropic", "openai", "gemini", "cohere", "mistral"],
-            "data":   ["pandas", "polars", "numpy", "dask"],
-            "ml":     ["scikit-learn", "xgboost", "lightgbm", "statsmodels"],
-            "db":     ["postgresql", "mysql", "sqlite", "mongodb", "bigquery", "snowflake"],
-            "viz":    ["plotly", "matplotlib", "seaborn", "bokeh"],
-            "mlops":  ["mlflow", "wandb", "dvc"],
-            "vector": ["pinecone", "weaviate", "chroma", "faiss"],
-        },
+        "ai_engines": ["anthropic", "openai", "gemini", "cohere", "mistral", "statistical"],
+        "docs": "/docs",
     }
 
 
 @app.get("/health", tags=["Health"])
 async def health():
-    return {"status": "healthy"}
+    return {"status": "healthy", "version": "2.0.0"}
 
 
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
-    logger.error(f"Unhandled error: {exc}", exc_info=True)
-    return JSONResponse(status_code=500, content={"error": str(exc)})
+    logger.error(f"Unhandled error on {request.url}: {exc}", exc_info=True)
+    return JSONResponse(
+        status_code=500,
+        content={"error": "Internal server error", "detail": str(exc)}
+    )
 
 
 if __name__ == "__main__":
