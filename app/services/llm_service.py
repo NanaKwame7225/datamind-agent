@@ -1,6 +1,6 @@
 """
 DataMind Agent — Elite LLM Service
-5-provider failover: Claude -> GPT-4o -> Gemini -> Command R+ -> Mistral
+5-provider failover: Grok -> Claude -> GPT-4o -> Gemini -> Command R+ -> Mistral
 Every call injects pre-computed statistical evidence so AI cannot speculate.
 """
 from __future__ import annotations
@@ -130,8 +130,8 @@ Which metrics move together? State the r-value, p-value, and sample size. Is it 
 
 class EliteLLMService:
     """
-    Elite LLM service with automatic failover across 5 providers.
-    Priority: Claude Sonnet 4 -> GPT-4o -> Gemini 2.0 Flash -> Command R+ -> Mistral Large
+    Elite LLM service with automatic failover across 6 providers.
+    Priority: Grok -> Claude Sonnet 4 -> GPT-4o -> Gemini 2.0 Flash -> Command R+ -> Mistral Large
     Injects pre-computed statistical evidence into every prompt.
     """
 
@@ -139,7 +139,7 @@ class EliteLLMService:
         self,
         messages: list[dict],
         industry: str = "general",
-        provider: LLMProvider = LLMProvider.anthropic,
+        provider: LLMProvider = LLMProvider.grok,  # Default changed to Grok
         model: Optional[str] = None,
         max_tokens: int = 2500,
         temperature: float = 0.1,
@@ -292,6 +292,7 @@ class EliteLLMService:
 
     def _build_chain(self, preferred_provider, preferred_model):
         all_providers = [
+            (LLMProvider.grok,      self._grok,      "Grok 3",           "grok-3",                   settings.GROK_API_KEY),
             (LLMProvider.anthropic, self._anthropic, "Claude Sonnet 4",  "claude-sonnet-4-20250514", settings.ANTHROPIC_API_KEY),
             (LLMProvider.openai,    self._openai,    "GPT-4o",           "gpt-4o",                   settings.OPENAI_API_KEY),
             (LLMProvider.gemini,    self._gemini,    "Gemini 2.0 Flash", "gemini-2.0-flash",         settings.GOOGLE_API_KEY),
@@ -311,8 +312,22 @@ class EliteLLMService:
 
     async def _no_keys_error(self, *args, **kwargs):
         raise Exception(
-            "No API keys configured. Add ANTHROPIC_API_KEY or OPENAI_API_KEY in Railway Variables."
+            "No API keys configured. Add GROK_API_KEY or ANTHROPIC_API_KEY in Railway Variables."
         )
+
+    async def _grok(self, messages, system, model, max_tokens, temperature):
+        """Grok (xAI) provider integration."""
+        import openai
+        client = openai.AsyncOpenAI(
+            api_key=settings.GROK_API_KEY,
+            base_url="https://api.x.ai/v1"
+        )
+        r = await client.chat.completions.create(
+            model=model,
+            messages=[{"role":"system","content":system}] + messages,
+            max_tokens=max_tokens, temperature=temperature,
+        )
+        return r.choices[0].message.content, r.usage.total_tokens
 
     async def _anthropic(self, messages, system, model, max_tokens, temperature):
         import anthropic
