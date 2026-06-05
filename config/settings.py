@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     ALLOWED_ORIGINS: list[str] = ["https://nanakwame7225.github.io", "http://localhost:3000", "http://localhost:8080"]
 
     # LLM
+    GROK_API_KEY: Optional[str] = None
     ANTHROPIC_API_KEY: Optional[str] = None
     OPENAI_API_KEY: Optional[str] = None
     GOOGLE_API_KEY: Optional[str] = None
