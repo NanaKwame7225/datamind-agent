@@ -3,6 +3,7 @@ from typing import Any, Optional, Literal
 from enum import Enum
 
 class LLMProvider(str, Enum):
+      grok = "grok"
     anthropic = "anthropic"
     openai = "openai"
     gemini = "gemini"
