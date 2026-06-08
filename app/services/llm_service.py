@@ -1,6 +1,7 @@
 """
-DataMind Agent — Elite LLM Service
-5-provider failover: Grok -> Claude -> GPT-4o -> Gemini -> Command R+ -> Mistral
+DataMind Agent — Elite LLM Service v2
+Priority chain: Groq (llama-3.3-70b) -> Claude Sonnet 4 -> GPT-4o -> Gemini 2.0 Flash -> Command R+
+Groq is first — fastest, free tier available, excellent reasoning.
 Every call injects pre-computed statistical evidence so AI cannot speculate.
 """
 from __future__ import annotations
@@ -14,7 +15,8 @@ logger = logging.getLogger(__name__)
 INDUSTRY_CONTEXTS = {
     "finance": """You are a CFO-level financial data analyst with 20 years experience.
 Focus on: revenue, profitability, cash flow, risk metrics, ROI, EBITDA, NPV, liquidity ratios.
-Always ground every claim in the exact numbers provided. Flag anomalies, fraud signals, covenant risks.""",
+Always ground every claim in the exact numbers provided. Flag anomalies, fraud signals, covenant risks.
+Reference causal flags, bias warnings and alternative explanations where provided.""",
     "education": """You are a senior education data analyst and institutional researcher.
 Focus on: pass rates, dropout predictors, cohort retention, fee collection efficiency, assessment analytics.
 Always ground every claim in exact numbers. Identify at-risk student segments with evidence.""",
@@ -69,15 +71,31 @@ CORE RULES — FOLLOW EVERY ONE WITHOUT EXCEPTION:
    - Explain WHY each issue matters to KPIs specifically
    - Quantify the impact: "This anomaly inflates the mean by 18%"
 
-4. SEGMENT EVERY FINDING
+4. CAUSAL REASONING — ALWAYS ADDRESS
+   - If confounders are flagged, explain how they affect interpretation
+   - Distinguish correlation from causation explicitly
+   - If Granger causality signals exist, reference them
+   - If regression discontinuity signals exist, flag the threshold
+
+5. BIAS AUDIT — ALWAYS ADDRESS
+   - Reference any survivorship bias, selection bias, or missingness mechanism warnings
+   - State whether imputation is valid given the missingness mechanism
+   - Flag any impossible values detected
+
+6. SEGMENT EVERY FINDING
    - Break down findings by available categories (region, department, product, etc.)
    - Identify which segment is driving the issue
-   - Compare best vs worst performing segments with exact numbers
+   - Include Cohen's d effect sizes where available
 
-5. UNCERTAINTY AND SELF-AUDIT
+7. ALTERNATIVE EXPLANATIONS
+   - For every major finding, provide 2-3 competing explanations
+   - State which explanation is most supported by the data and why
+
+8. UNCERTAINTY AND SELF-AUDIT
    - State explicitly what assumptions you are making
    - Identify what you could be wrong about
-   - Flag what additional data would improve the analysis
+   - Reference power analysis results — is the sample large enough?
+   - Apply Bonferroni correction context to all significance claims
 
 RESPONSE FORMAT — USE EXACTLY THIS STRUCTURE:
 
@@ -86,72 +104,78 @@ RESPONSE FORMAT — USE EXACTLY THIS STRUCTURE:
 One paragraph. The single most important thing the decision-maker needs to know. End with one actionable sentence.
 
 ---
-## DATA QUALITY
-State exactly what was found: rows, columns, missing values, duplicates, outliers capped.
+## DATA QUALITY & BIAS AUDIT
+State exactly: rows, columns, missing values, duplicates, outliers. Flag any bias warnings from the audit.
 
 ---
 ## KEY FINDINGS (ranked by impact)
 
 ### Finding 1 — [Title] | Impact: HIGH | Confidence: [X]%
-**Evidence:** [Exact numbers, sample rows, z-scores, p-values]
+**Evidence:** [Exact numbers, z-scores, p-values, effect sizes]
 **Business Impact:** [Specific KPI effect, quantified]
-**Affected Segments:** [Which categories/regions are most affected]
+**Affected Segments:** [Which categories/regions, with Cohen's d]
+**Causal Note:** [Is this causal or correlational? Any confounders?]
+**Alternative Explanations:** [2-3 competing theories]
 **Recommended Action:** [Specific, measurable action]
 
-### Finding 2 — [Title] | Impact: MEDIUM | Confidence: [X]%
-[Same structure]
+---
+## CAUSAL ANALYSIS
+Address all confounder flags, Granger causality signals, and regression discontinuity signals.
+Explicitly state what can and cannot be inferred causally.
 
 ---
 ## SEGMENT ANALYSIS
-Break down the top metric by every available categorical variable. Quote exact numbers per segment.
+Break down every metric by all available categorical variables. Quote exact numbers per segment with p-values and effect sizes.
 
 ---
 ## CORRELATIONS & RELATIONSHIPS
-Which metrics move together? State the r-value, p-value, and sample size. Is it statistically significant?
+State r-value, Bonferroni-corrected p-value, sample size. Distinguish spurious from meaningful correlations.
+
+---
+## TIME SERIES INSIGHTS
+Address structural breaks, seasonality signals, and autocorrelation findings if available.
 
 ---
 ## RECOMMENDATIONS (numbered, prioritised)
-1. [Most impactful] — [Why] — [How to measure success]
-2. [Second most impactful] — [Why] — [How to measure success]
+1. [Most impactful] — [Why] — [How to measure success] — [Confidence: X%]
+2. [Second most impactful] — [Why] — [How to measure success] — [Confidence: X%]
 
 ---
-## UNCERTAINTY & CAVEATS
-- What assumptions were made
+## UNCERTAINTY, POWER & CAVEATS
+- Sample size adequacy (reference power analysis)
+- Multiple comparison correction applied
 - What this analysis cannot tell you
 - What additional data would improve confidence
 
 ---
 ## SELF-AUDIT
 - What I could be wrong about
-- Alternative explanations for the patterns found
+- What I tested and rejected
 - Limitations of the methods used
+- What domain context would change these conclusions
 ---"""
 
 
 class EliteLLMService:
     """
     Elite LLM service with automatic failover across 6 providers.
-    Priority: Grok -> Claude Sonnet 4 -> GPT-4o -> Gemini 2.0 Flash -> Command R+ -> Mistral Large
-    Injects pre-computed statistical evidence into every prompt.
+    Priority: Groq -> Claude Sonnet 4 -> GPT-4o -> Gemini 2.0 Flash -> Command R+ -> Statistical
+    Groq is first: fastest response, excellent reasoning, llama-3.3-70b-versatile.
+    Injects pre-computed statistical evidence + causal/bias context into every prompt.
     """
 
     async def chat(
         self,
         messages: list[dict],
         industry: str = "general",
-        provider: LLMProvider = LLMProvider.grok,  # Default changed to Grok
+        provider: LLMProvider = LLMProvider.anthropic,
         model: Optional[str] = None,
         max_tokens: int = 2500,
         temperature: float = 0.1,
         elite_context: Optional[dict] = None,
     ) -> tuple[str, int, str]:
-        """
-        Returns (response_text, tokens_used, provider_name).
-        elite_context: pre-computed analysis dict injected into the prompt.
-        """
         system = ELITE_SYSTEM + "\n\n" + INDUSTRY_CONTEXTS.get(industry, INDUSTRY_CONTEXTS["general"])
 
-        # Inject pre-computed statistical evidence
         if elite_context:
             messages = self._inject_elite_context(messages, elite_context)
 
@@ -170,15 +194,11 @@ class EliteLLMService:
         raise Exception(f"All providers failed. Last error: {last_error}")
 
     def _inject_elite_context(self, messages: list[dict], ctx: dict) -> list[dict]:
-        """
-        Prepend pre-computed statistical evidence to the user message.
-        Forces the AI to cite real numbers instead of speculating.
-        """
         lines = [
             f"DATASET: {ctx.get('row_count','?')} rows × {ctx.get('col_count','?')} columns",
             f"COLUMNS: {', '.join(ctx.get('columns',[])[:12])}",
             "",
-            "PRE-COMPUTED STATISTICAL EVIDENCE (you MUST reference these exact numbers in your response):",
+            "PRE-COMPUTED STATISTICAL EVIDENCE — YOU MUST REFERENCE THESE EXACT NUMBERS:",
         ]
 
         # Distributions
@@ -209,44 +229,114 @@ class EliteLLMService:
                 if ev.get("context_rows"):
                     lines.append(f"    Sample anomalous rows: {ev['context_rows'][:2]}")
 
-        # Trends
+        # Trends with structural breaks
         trend_findings = [f for f in ctx.get("findings",[]) if f["type"]=="trend"]
         if trend_findings:
-            lines.append("\nTRENDS (OLS regression):")
+            lines.append("\nTRENDS (OLS regression + CUSUM structural break detection):")
             for f in trend_findings[:4]:
                 ev = f["evidence"]
                 sig = f"p={ev.get('p_value','?')} ({'significant' if ev.get('statistically_significant') else 'not significant'})"
+                break_note = f", STRUCTURAL BREAK at period {ev.get('structural_break_at_period','?')}" if ev.get('structural_break_detected') else ""
                 lines.append(
                     f"  {f['column']}: {ev['total_change_pct']}% change over {ev['period_count']} periods, "
-                    f"slope={ev['slope_per_period']}/period, R²={ev['r_squared']}, {sig}, "
-                    f"first={ev['first_value']}, last={ev['last_value']}, "
+                    f"R²={ev['r_squared']}, {sig}, "
+                    f"first={ev['first_value']}, last={ev['last_value']}{break_note}, "
                     f"confidence: {round(f['confidence']*100)}%"
                 )
 
-        # Correlations
+        # Correlations with Bonferroni
         if ctx.get("correlations"):
-            lines.append("\nCORRELATIONS (Pearson):")
+            lines.append("\nCORRELATIONS (Pearson + Bonferroni correction):")
             for c in ctx["correlations"][:5]:
-                sig = "statistically significant" if c["significant"] else "not significant"
+                sig = "significant after Bonferroni" if c.get("significant_after_correction") else "NOT significant after Bonferroni"
                 lines.append(
                     f"  {c['col1']} ↔ {c['col2']}: r={c['correlation']} ({c['strength']} {c['direction']}), "
-                    f"p={c['p_value']} ({sig}), n={c['n_observations']}. {c['interpretation']}"
+                    f"p_raw={c['p_value_raw']}, p_corrected={c.get('p_value_bonferroni_corrected','?')} ({sig}), "
+                    f"n={c['n_observations']}. {c['interpretation']}"
                 )
 
-        # Segmentation
+        # Segmentation with effect sizes
         if ctx.get("segmentation"):
-            lines.append("\nSEGMENTATION ANALYSIS:")
+            lines.append("\nSEGMENTATION (with Cohen's d effect sizes):")
             for seg_col, seg_data in list(ctx["segmentation"].items())[:3]:
                 lines.append(f"  By {seg_col} ({seg_data['unique_segments']} segments):")
                 for metric, segments in list(seg_data["metrics"].items())[:2]:
                     lines.append(f"    {metric}:")
                     for s in segments[:5]:
-                        sig = " [statistically different]" if s["statistically_different"] else ""
+                        sig = " [significantly different]" if s["statistically_different"] else ""
+                        d = s.get("cohens_d", "?")
+                        effect = s.get("effect_size", "?")
                         lines.append(
                             f"      {s['segment']}: mean={s['mean']}, n={s['count']} ({s['pct_of_total']}%), "
-                            f"deviation from avg: {s['deviation_from_overall_pct']:+.1f}%{sig}, "
-                            f"p={s['p_value']}"
+                            f"deviation: {s['deviation_from_overall_pct']:+.1f}%{sig}, "
+                            f"Cohen's d={d} ({effect} effect)"
                         )
+
+        # Causal analysis
+        causal = ctx.get("causal_analysis", {})
+        if causal:
+            lines.append("\nCAUSAL ANALYSIS FLAGS:")
+            confounders = causal.get("potential_confounders", [])
+            if confounders:
+                lines.append(f"  CONFOUNDERS DETECTED ({len(confounders)}):")
+                for c in confounders[:3]:
+                    lines.append(f"    {c['warning']} (p={c['p_value']})")
+            granger = causal.get("granger_causality_signals", [])
+            if granger:
+                lines.append(f"  GRANGER CAUSALITY SIGNALS ({len(granger)}):")
+                for g in granger[:3]:
+                    lines.append(f"    {g['note']} (lag r={g['lag_correlation']}, p={g['p_value']})")
+            rdd = causal.get("regression_discontinuity_signals", [])
+            if rdd:
+                lines.append(f"  REGRESSION DISCONTINUITY SIGNALS ({len(rdd)}):")
+                for r in rdd[:2]:
+                    lines.append(f"    {r['note']}")
+
+        # Bias audit
+        bias = ctx.get("bias_audit", {})
+        if bias:
+            lines.append("\nBIAS AUDIT:")
+            missingness = bias.get("missingness_mechanism", {})
+            for col, m in list(missingness.items())[:3]:
+                lines.append(f"  {col}: {m['likely_mechanism']} — {m['recommendation']}")
+            impossible = bias.get("impossible_values", [])
+            if impossible:
+                for iv in impossible[:2]:
+                    lines.append(f"  IMPOSSIBLE VALUES: {iv['issue']} — {iv['suggestion']}")
+            surv = bias.get("survivorship_bias_warning", {})
+            if surv:
+                lines.append(f"  SURVIVORSHIP BIAS: {surv['note']}")
+
+        # Advanced statistics
+        advanced = ctx.get("advanced_statistics", {})
+        if advanced:
+            lines.append("\nADVANCED STATISTICS:")
+            power = advanced.get("power_analysis", [])
+            for p in power[:2]:
+                lines.append(f"  Power ({p['column']}): n={p['n']}, min detectable effect={p['min_detectable_effect']} ({p['min_detectable_effect_pct_of_mean']}% of mean), adequate={'YES' if p['adequate_power'] else 'NO — sample too small'}")
+            mc = advanced.get("multiple_comparison_correction", {})
+            if mc:
+                lines.append(f"  Multiple comparisons: {mc['n_tests_run']} tests, Bonferroni α={mc['alpha_adjusted']}")
+            effect_sizes = advanced.get("effect_sizes", {})
+            for k, v in list(effect_sizes.items())[:2]:
+                lines.append(f"  Effect size ({k}): Cohen's d={v['cohens_d']} ({v['magnitude']}) — {v['interpretation']}")
+
+        # Time series
+        ts = ctx.get("time_series_intelligence", {})
+        if ts:
+            lines.append("\nTIME SERIES INTELLIGENCE:")
+            for col, t in list(ts.items())[:2]:
+                sb = t.get("structural_break", {})
+                lines.append(f"  {col}: {sb.get('interpretation','?')}, autocorr_lag1={t.get('autocorrelation_lag1','?')}, seasonality_signal={'YES' if t.get('seasonality_signal') else 'NO'}")
+
+        # Alternative explanations
+        alt = ctx.get("alternative_explanations", {})
+        if alt:
+            lines.append("\nALTERNATIVE EXPLANATIONS (consider all before concluding):")
+            for col, alts in list(alt.items())[:2]:
+                lines.append(f"  {col}:")
+                for a in alts[:3]:
+                    lines.append(f"    - {a}")
 
         # Impact ranking
         if ctx.get("impact_ranking"):
@@ -255,77 +345,104 @@ class EliteLLMService:
                 lines.append(
                     f"  #{i} {imp['column']}: impact_score={imp['score']}/10, "
                     f"confidence={round(imp['confidence']*100)}%, "
-                    f"primary_issue={imp['primary_issue']}, reason={imp['reason']}"
+                    f"issue={imp['primary_issue']}, reason={imp['reason']}"
                 )
 
         # Uncertainty
         if ctx.get("uncertainty"):
-            lines.append("\nUNCERTAINTY FLAGS (address these in your self-audit):")
-            for u in ctx["uncertainty"][:4]:
-                lines.append(
-                    f"  - {u['issue']}: {u['detail'][:150]} "
-                    f"(confidence adjustment: {u['confidence_adjustment']})"
-                )
+            lines.append("\nUNCERTAINTY FLAGS:")
+            for u in ctx["uncertainty"][:5]:
+                lines.append(f"  - {u['issue']}: {u['detail'][:150]} (confidence adjustment: {u.get('confidence_adjustment',0)})")
 
-        # Data grounding summary
+        # Data grounding
         dg = ctx.get("data_grounding", {})
         if dg:
-            lines.append(f"\nDATA GROUNDING SUMMARY:")
-            lines.append(f"  Total data points analysed: {dg.get('total_data_points','?')}")
-            lines.append(f"  Total anomalies found: {dg.get('total_anomalies_found','?')}")
-            lines.append(f"  Total correlations found: {dg.get('total_correlations_found','?')}")
-            lines.append(f"  Segments analysed: {dg.get('segments_analysed','?')}")
-            lines.append(f"  Highest confidence finding: {round(dg.get('highest_confidence_finding',0)*100)}%")
+            lines.append(f"\nDATA GROUNDING: {dg.get('total_data_points','?')} data points, "
+                         f"{dg.get('total_anomalies_found','?')} anomalies, "
+                         f"{dg.get('total_correlations_found','?')} correlations, "
+                         f"{dg.get('segments_analysed','?')} segments, "
+                         f"{dg.get('causal_flags_raised','?')} causal flags, "
+                         f"{dg.get('bias_flags_raised','?')} bias flags, "
+                         f"{dg.get('methods_applied','?')} methods applied")
 
         evidence_block = "\n".join(lines)
-
         augmented = []
         for msg in messages:
             if msg["role"] == "user":
-                augmented.append({
-                    "role": "user",
-                    "content": evidence_block + "\n\n" + msg["content"],
-                })
+                augmented.append({"role": "user", "content": evidence_block + "\n\n" + msg["content"]})
             else:
                 augmented.append(msg)
         return augmented
 
     def _build_chain(self, preferred_provider, preferred_model):
-        all_providers = [
-            (LLMProvider.grok,      self._grok,      "Grok 3",           "grok-3",                   settings.GROK_API_KEY),
-            (LLMProvider.anthropic, self._anthropic, "Claude Sonnet 4",  "claude-sonnet-4-20250514", settings.ANTHROPIC_API_KEY),
-            (LLMProvider.openai,    self._openai,    "GPT-4o",           "gpt-4o",                   settings.OPENAI_API_KEY),
-            (LLMProvider.gemini,    self._gemini,    "Gemini 2.0 Flash", "gemini-2.0-flash",         settings.GOOGLE_API_KEY),
-            (LLMProvider.cohere,    self._cohere,    "Command R+",       "command-r-plus",            settings.COHERE_API_KEY),
-            (LLMProvider.mistral,   self._mistral,   "Mistral Large",    "mistral-large-latest",      settings.MISTRAL_API_KEY),
-        ]
-        preferred = [(fn, name, preferred_model or mdl)
-                     for p, fn, name, mdl, key in all_providers
-                     if p == preferred_provider and key]
-        fallbacks = [(fn, name, mdl)
-                     for p, fn, name, mdl, key in all_providers
-                     if p != preferred_provider and key]
-        chain = preferred + fallbacks
+        # Groq is always first regardless of preferred_provider
+        # It is the fastest and most cost-effective
+        groq_key = getattr(settings, 'GROQ_API_KEY', None)
+        anthropic_key = getattr(settings, 'ANTHROPIC_API_KEY', None)
+        openai_key = getattr(settings, 'OPENAI_API_KEY', None)
+        google_key = getattr(settings, 'GOOGLE_API_KEY', None)
+        cohere_key = getattr(settings, 'COHERE_API_KEY', None)
+
+        chain = []
+
+        # Groq always goes first if key exists
+        if groq_key:
+            chain.append((self._groq, "Groq llama-3.3-70b", "llama-3.3-70b-versatile"))
+
+        # Then preferred provider (if not Groq)
+        provider_map = {
+            "anthropic": (self._anthropic, "Claude Sonnet 4", "claude-sonnet-4-20250514", anthropic_key),
+            "openai":    (self._openai,    "GPT-4o",          "gpt-4o",                   openai_key),
+            "gemini":    (self._gemini,    "Gemini 2.0 Flash","gemini-2.0-flash",          google_key),
+            "cohere":    (self._cohere,    "Command R+",      "command-r-plus",            cohere_key),
+        }
+
+        preferred_name = preferred_provider.value if hasattr(preferred_provider, 'value') else str(preferred_provider)
+        if preferred_name in provider_map:
+            fn, name, mdl, key = provider_map[preferred_name]
+            if key:
+                chain.append((fn, name, preferred_model or mdl))
+
+        # Remaining fallbacks in priority order
+        fallback_order = ["anthropic", "openai", "gemini", "cohere"]
+        for pname in fallback_order:
+            if pname == preferred_name:
+                continue
+            if pname in provider_map:
+                fn, name, mdl, key = provider_map[pname]
+                if key:
+                    chain.append((fn, name, mdl))
+
         if not chain:
-            return [(self._no_keys_error, "no-provider", "none")]
-        return chain
+            chain.append((self._no_keys_error, "no-provider", "none"))
+
+        # Remove duplicates preserving order
+        seen = set()
+        unique_chain = []
+        for item in chain:
+            key = item[1]
+            if key not in seen:
+                seen.add(key)
+                unique_chain.append(item)
+
+        return unique_chain
 
     async def _no_keys_error(self, *args, **kwargs):
-        raise Exception(
-            "No API keys configured. Add GROK_API_KEY or ANTHROPIC_API_KEY in Railway Variables."
-        )
+        raise Exception("No API keys configured. Add GROQ_API_KEY or ANTHROPIC_API_KEY in Railway Variables.")
 
-    async def _grok(self, messages, system, model, max_tokens, temperature):
-        """Grok (xAI) provider integration."""
-        import openai
-        client = openai.AsyncOpenAI(
-            api_key=settings.GROK_API_KEY,
-            base_url="https://api.x.ai/v1"
+    async def _groq(self, messages, system, model, max_tokens, temperature):
+        """Groq — fastest provider, llama-3.3-70b-versatile"""
+        from openai import AsyncOpenAI
+        groq_key = getattr(settings, 'GROQ_API_KEY', None)
+        client = AsyncOpenAI(
+            api_key=groq_key,
+            base_url="https://api.groq.com/openai/v1",
         )
         r = await client.chat.completions.create(
             model=model,
             messages=[{"role":"system","content":system}] + messages,
-            max_tokens=max_tokens, temperature=temperature,
+            max_tokens=min(max_tokens, 8000),
+            temperature=temperature,
         )
         return r.choices[0].message.content, r.usage.total_tokens
 
@@ -355,8 +472,7 @@ class EliteLLMService:
             model_name=model, system_instruction=system,
             generation_config={"max_output_tokens": max_tokens, "temperature": temperature},
         )
-        msgs = [{"role":"user" if x["role"]=="user" else "model",
-                 "parts":[x["content"]]} for x in messages]
+        msgs = [{"role":"user" if x["role"]=="user" else "model", "parts":[x["content"]]} for x in messages]
         chat = m.start_chat(history=msgs[:-1])
         r = await chat.send_message_async(msgs[-1]["parts"][0])
         tokens = r.usage_metadata.total_token_count if hasattr(r,"usage_metadata") else 0
@@ -371,16 +487,6 @@ class EliteLLMService:
             max_tokens=max_tokens, temperature=temperature,
         )
         return r.message.content[0].text, r.usage.tokens.input_tokens + r.usage.tokens.output_tokens
-
-    async def _mistral(self, messages, system, model, max_tokens, temperature):
-        from mistralai import Mistral
-        client = Mistral(api_key=settings.MISTRAL_API_KEY)
-        r = await client.chat.complete_async(
-            model=model,
-            messages=[{"role":"system","content":system}] + messages,
-            max_tokens=max_tokens, temperature=temperature,
-        )
-        return r.choices[0].message.content, r.usage.total_tokens
 
 
 llm_service = EliteLLMService()
