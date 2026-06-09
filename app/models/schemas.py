@@ -112,3 +112,35 @@ class AnalysisResponse(BaseModel):
 class ChatResponse(BaseModel):
     reply:    str
     provider: str = "unknown"
+
+
+# ── Pipeline models ────────────────────────────────────────────────────────────
+
+class PipelineRunRequest(BaseModel):
+    steps: list[dict] = Field(default_factory=list)
+    industry: Industry = Industry.general
+    provider: LLMProvider = LLMProvider.groq
+    inline_data: Optional[list[dict]] = None
+
+
+class PipelineRunResponse(BaseModel):
+    run_id: str
+    status: str
+    steps_completed: int = 0
+    steps_total: int = 0
+    duration_ms: float = 0.0
+    outputs: dict = Field(default_factory=dict)
+
+
+# ── Upload models ──────────────────────────────────────────────────────────────
+
+class FileUploadResponse(BaseModel):
+    file_id:      str
+    filename:     str
+    format:       str
+    rows:         int
+    columns:      int
+    size_bytes:   int
+    file_schema:  dict                    = Field(default_factory=dict)
+    sample:       list[dict]              = Field(default_factory=list)
+    quality_report: Optional[dict]        = None
