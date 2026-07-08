@@ -19,7 +19,7 @@ class DocumentExportService:
 
     # ── WORD EXPORT ───────────────────────────────────────────────────────────
 
-    def build_word_report(self, result: dict, finance: dict = None) -> bytes:
+    def build_word_report(self, result: dict, finance: dict = None, chart_images: list = None) -> bytes:
         from docx import Document
         from docx.shared import Pt, RGBColor, Inches
         from docx.enum.text import WD_ALIGN_PARAGRAPH
@@ -104,6 +104,10 @@ class DocumentExportService:
                     run.font.size = Pt(10)
                     run.font.italic = True
                     run.font.color.rgb = RGBColor(0x66, 0x66, 0x66)
+
+        # ── CHART IMAGES ──
+        if chart_images:
+            self._add_charts_word(doc, chart_images)
 
         # ── FINANCE MODULES ──
         if finance:
@@ -210,6 +214,32 @@ class DocumentExportService:
                     run.font.name = 'Times New Roman'
                     run.font.size = Pt(12)
 
+    def _add_charts_word(self, doc, chart_images):
+        import base64, io
+        from docx.shared import Inches, Pt, RGBColor
+        from docx.enum.text import WD_ALIGN_PARAGRAPH
+        self._add_heading(doc, "Dashboard Visualisations")
+        for ci in chart_images[:8]:
+            if not ci or not ci.get("image"):
+                continue
+            title = ci.get("title", "")
+            if title:
+                p = doc.add_paragraph()
+                run = p.add_run(title)
+                run.font.name = 'Times New Roman'; run.font.size = Pt(12); run.font.bold = True
+            try:
+                img_bytes = base64.b64decode(ci["image"].split(",")[-1])
+                p = doc.add_paragraph(); p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                run = p.add_run()
+                run.add_picture(io.BytesIO(img_bytes), width=Inches(6.0))
+            except Exception:
+                pass
+            if ci.get("subtitle"):
+                sp = doc.add_paragraph()
+                r = sp.add_run(ci["subtitle"])
+                r.font.name = 'Times New Roman'; r.font.size = Pt(10); r.font.italic = True
+                r.font.color.rgb = RGBColor(0x66, 0x66, 0x66)
+
     def _add_finance_word(self, doc, finance):
         from docx.shared import Pt
         tax = finance.get("tax")
@@ -244,7 +274,7 @@ class DocumentExportService:
 
     # ── PDF EXPORT ────────────────────────────────────────────────────────────
 
-    def build_pdf_report(self, result: dict, finance: dict = None) -> bytes:
+    def build_pdf_report(self, result: dict, finance: dict = None, chart_images: list = None) -> bytes:
         from reportlab.lib.pagesizes import letter
         from reportlab.lib.units import inch
         from reportlab.lib.colors import HexColor
@@ -321,6 +351,10 @@ class DocumentExportService:
                 if i.get('source'):
                     story.append(Paragraph(f"Method: {self._esc(i.get('source'))}", src_style))
 
+        # Chart images
+        if chart_images:
+            self._add_charts_pdf(story, chart_images, heading_style, subhead_style, src_style)
+
         # Finance
         if finance:
             self._add_finance_pdf(story, finance, heading_style, body_style, bullet_style)
@@ -366,6 +400,26 @@ class DocumentExportService:
                 text = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', text)
                 story.append(Paragraph(text, body))
         flush_bullets()
+
+    def _add_charts_pdf(self, story, chart_images, heading, subhead, src):
+        import base64, io
+        from reportlab.platypus import Paragraph, Spacer, Image
+        from reportlab.lib.units import inch
+        story.append(Paragraph("Dashboard Visualisations", heading))
+        for ci in chart_images[:8]:
+            if not ci or not ci.get("image"):
+                continue
+            if ci.get("title"):
+                story.append(Paragraph(self._esc(ci["title"]), subhead))
+            try:
+                img_bytes = base64.b64decode(ci["image"].split(",")[-1])
+                img = Image(io.BytesIO(img_bytes), width=6*inch, height=3*inch, kind='proportional')
+                story.append(img)
+            except Exception:
+                pass
+            if ci.get("subtitle"):
+                story.append(Paragraph(self._esc(ci["subtitle"]), src))
+            story.append(Spacer(1, 0.15*inch))
 
     def _add_finance_pdf(self, story, finance, heading, body, bullet):
         from reportlab.platypus import Paragraph, ListFlowable, ListItem
