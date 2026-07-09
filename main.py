@@ -82,6 +82,14 @@ try:
 except Exception as e:
     logger.error(f"Memory router failed: {e}", exc_info=True)
 
+# ── Forecast / Predictive Analytics router ────────────────────────────────────
+try:
+    from app.routers import forecast as forecast_router
+    app.include_router(forecast_router.router, prefix="/api/v1/forecast", tags=["Predictive Analytics"])
+    logger.info("Forecast router loaded")
+except Exception as e:
+    logger.error(f"Forecast router failed: {e}", exc_info=True)
+
 
 @app.get("/")
 async def root():
@@ -92,10 +100,13 @@ async def root():
         "stack": {
             "llm": "Claude Sonnet 4 → GPT-4o → Gemini 2.0 Flash → Groq → Command R+",
             "analytics": "Pandas + NumPy + SciPy + Scikit-learn",
+            "forecasting": "Holt-Winters + OLS with 95% prediction intervals",
             "sql": "DuckDB in-process SQL engine",
             "memory": "SQLite persistent conversation memory",
             "rag": "Industry benchmarks + domain knowledge retrieval",
+            "parsing": "Excel, PDF, CSV, JSON, Parquet — single or multi-file",
             "viz": "Plotly interactive charts",
+            "export": "Word, PDF, PowerPoint",
         },
         "endpoints": {
             "analysis":   "/api/v1/analysis/analyse",
@@ -103,6 +114,11 @@ async def root():
             "sql":        "/api/v1/sql/query",
             "sql_nl":     "/api/v1/sql/natural",
             "memory":     "/api/v1/memory/context",
+            "forecast":   "/api/v1/forecast/predict",
+            "scenario":   "/api/v1/forecast/scenario",
+            "upload":     "/api/v1/upload/parse",
+            "upload_multi": "/api/v1/upload/parse-multi",
+            "export_pptx":  "/api/v1/export/pptx",
         },
         "docs": "/docs",
     }
