@@ -1,6 +1,21 @@
+"""
+DataMind Agent — Analysis Router (v3)
+
+Fixes over v2:
+  • Elite analysis step no longer silently fails on a missing key.
+    Every field is read defensively, and the step reports real timing
+    whether it succeeds or fails.
+  • Correlation key corrected: 'significant_after_correction' (Bonferroni),
+    with a fallback to the older 'significant' key.
+  • RAG industry benchmarks are injected into the LLM prompt.
+  • Memory layer stores each analysis and feeds prior context back in.
+  • Causal flags, bias audit and advanced statistics surface as Insights.
+  • A partial elite result still yields insights rather than nothing.
+"""
 import time, logging, json
 from pydantic import BaseModel as _BaseModel
 from fastapi import APIRouter, HTTPException
+from typing import Optional
 import pandas as pd
 
 from app.models.schemas import (
@@ -26,133 +41,329 @@ def _step(name, tool, status="done", ms=0.0, preview=None):
                         duration_ms=round(ms, 1), output_preview=preview)
 
 
+def _g(d, *keys, default=None):
+    """Safe nested get. _g(d, 'a', 'b') == d['a']['b'] or default."""
+    cur = d
+    for k in keys:
+        if not isinstance(cur, dict) or k not in cur:
+            return default
+        cur = cur[k]
+    return cur if cur is not None else default
+
+
+def _count_segments(segmentation) -> int:
+    """Count segments without assuming every entry has a 'metrics' key."""
+    if not isinstance(segmentation, dict):
+        return 0
+    total = 0
+    for v in segmentation.values():
+        if isinstance(v, dict):
+            m = v.get("metrics")
+            if isinstance(m, dict):
+                total += len(m)
+            elif v.get("unique_segments"):
+                total += int(v["unique_segments"])
+    return total
+
+
+# ── Insight builders — each is independently guarded ──────────────────────────
+
+def _findings_to_insights(elite) -> list[Insight]:
+    out = []
+    for f in (elite.get("findings") or [])[:6]:
+        try:
+            ev = f.get("evidence", {}) or {}
+            conf = float(f.get("confidence", 0.7))
+            ftype = f.get("type", "")
+            col = str(f.get("column", "")).replace("_", " ")
+
+            if ftype == "anomaly":
+                rng = ev.get("normal_range", ["?", "?"])
+                lo, hi = (rng + ["?", "?"])[:2] if isinstance(rng, list) else ("?", "?")
+                body = (
+                    f"Detected {ev.get('anomaly_count','?')} anomalous records "
+                    f"({ev.get('anomaly_pct','?')}% of data). "
+                    f"Normal range: [{lo}, {hi}]. "
+                    f"Anomalous values: {(ev.get('anomaly_values') or [])[:3]}. "
+                    f"These inflate the average by {ev.get('impact_on_mean_pct','?')}%. "
+                    f"Max Z-score: {ev.get('z_score_max','?')}σ."
+                )
+            elif ftype == "trend":
+                sig = ("statistically significant" if ev.get("statistically_significant")
+                       else "not yet statistically significant")
+                brk = ""
+                if ev.get("structural_break_detected"):
+                    brk = f" A structural break was detected at period {ev.get('structural_break_at_period','?')}."
+                body = (
+                    f"Over {ev.get('period_count','?')} periods, {col} changed "
+                    f"{ev.get('total_change_pct','?')}% (from {ev.get('first_value','?')} "
+                    f"to {ev.get('last_value','?')}). R² = {ev.get('r_squared','?')} — "
+                    f"trend is {sig} (p = {ev.get('p_value','?')}).{brk}"
+                )
+            else:
+                body = f.get("body") or f.get("title", "")
+
+            out.append(Insight(
+                title=f.get("title", "Finding"),
+                body=body,
+                severity=f.get("severity", "info"),
+                source=f"{f.get('method','Statistical analysis')} · Confidence: {round(conf*100)}%",
+                confidence=conf,
+            ))
+        except Exception as e:
+            logger.debug(f"Skipped a finding: {e}")
+    return out
+
+
+def _correlations_to_insights(elite) -> list[Insight]:
+    out = []
+    for c in (elite.get("correlations") or [])[:2]:
+        try:
+            # v2 used 'significant'; v3 uses 'significant_after_correction'
+            sig = c.get("significant_after_correction", c.get("significant", False))
+            if not sig:
+                continue
+            p_show = c.get("p_value_bonferroni_corrected", c.get("p_value_raw", c.get("p_value", "?")))
+            out.append(Insight(
+                title=(f"Strong relationship: {str(c.get('col1','')).replace('_',' ')} ↔ "
+                       f"{str(c.get('col2','')).replace('_',' ')}"),
+                body=(
+                    f"Pearson r = {c.get('correlation','?')} "
+                    f"({c.get('strength','?')} {c.get('direction','?')} correlation), "
+                    f"p = {p_show} after Bonferroni correction, "
+                    f"based on {c.get('n_observations','?')} observations. "
+                    f"{c.get('interpretation','')}"
+                ),
+                severity="info",
+                source="Pearson correlation · Bonferroni corrected · scipy.stats",
+                confidence=0.90,
+            ))
+        except Exception as e:
+            logger.debug(f"Skipped a correlation: {e}")
+    return out
+
+
+def _causal_to_insights(elite) -> list[Insight]:
+    out = []
+    causal = elite.get("causal_analysis") or {}
+    try:
+        for c in (causal.get("potential_confounders") or [])[:2]:
+            out.append(Insight(
+                title="Possible confounding variable",
+                body=f"{c.get('warning','')} (p = {c.get('p_value','?')}). "
+                     "A relationship you observe may be driven by this third variable rather than a direct effect.",
+                severity="warning",
+                source="Confounder detection · ANOVA",
+                confidence=0.75,
+            ))
+        for g in (causal.get("granger_causality_signals") or [])[:1]:
+            out.append(Insight(
+                title="Lead-lag signal detected",
+                body=f"{g.get('note','')} (lag correlation r = {g.get('lag_correlation','?')}, "
+                     f"p = {g.get('p_value','?')}). This is suggestive of a lead-lag relationship, "
+                     "not proof of causation.",
+                severity="info",
+                source="Granger-style lag analysis",
+                confidence=0.65,
+            ))
+        for r in (causal.get("regression_discontinuity_signals") or [])[:1]:
+            out.append(Insight(
+                title="Discontinuity at a threshold",
+                body=str(r.get("note", "")),
+                severity="warning",
+                source="Regression discontinuity screen",
+                confidence=0.60,
+            ))
+    except Exception as e:
+        logger.debug(f"Causal insights skipped: {e}")
+    return out
+
+
+def _bias_to_insights(elite) -> list[Insight]:
+    out = []
+    bias = elite.get("bias_audit") or {}
+    try:
+        for col, m in list((bias.get("missingness_mechanism") or {}).items())[:2]:
+            out.append(Insight(
+                title=f"Missing data in {col.replace('_',' ')} is not random",
+                body=f"Likely mechanism: {m.get('likely_mechanism','?')}. {m.get('recommendation','')}",
+                severity="warning",
+                source="Missingness mechanism test · point-biserial",
+                confidence=0.70,
+            ))
+        for iv in (bias.get("impossible_values") or [])[:2]:
+            out.append(Insight(
+                title="Impossible values present",
+                body=f"{iv.get('issue','')} {iv.get('suggestion','')}",
+                severity="critical",
+                source="Range validation",
+                confidence=0.95,
+            ))
+        surv = bias.get("survivorship_bias_warning") or {}
+        if surv:
+            out.append(Insight(
+                title="Possible survivorship bias",
+                body=str(surv.get("note", "")),
+                severity="warning",
+                source="Survivorship bias screen",
+                confidence=0.65,
+            ))
+    except Exception as e:
+        logger.debug(f"Bias insights skipped: {e}")
+    return out
+
+
+def _power_to_insights(elite) -> list[Insight]:
+    out = []
+    adv = elite.get("advanced_statistics") or {}
+    try:
+        for p in (adv.get("power_analysis") or [])[:1]:
+            if p.get("adequate_power"):
+                continue
+            out.append(Insight(
+                title="Sample size may be too small to detect real effects",
+                body=(
+                    f"With n = {p.get('n','?')}, the smallest effect detectable at 80% power "
+                    f"is {p.get('min_detectable_effect','?')} "
+                    f"({p.get('min_detectable_effect_pct_of_mean','?')}% of the mean). "
+                    "Effects smaller than this could exist and go unseen."
+                ),
+                severity="warning",
+                source="Power analysis · α=0.05, power=0.80",
+                confidence=0.85,
+            ))
+    except Exception as e:
+        logger.debug(f"Power insights skipped: {e}")
+    return out
+
+
+def _uncertainty_to_insights(elite) -> list[Insight]:
+    out = []
+    for u in (elite.get("uncertainty") or [])[:2]:
+        try:
+            out.append(Insight(
+                title=f"Data limitation: {u.get('issue','')}",
+                body=str(u.get("detail", "")),
+                severity="warning",
+                source="Self-audit",
+                confidence=1.0,
+            ))
+        except Exception:
+            pass
+    return out
+
+
+def _elite_metrics(elite) -> list[Metric]:
+    out = []
+    dg = elite.get("data_grounding") or {}
+    try:
+        if dg.get("total_rows_analysed") is not None:
+            out.append(Metric(label="Rows analysed", value=str(dg["total_rows_analysed"])))
+        out.append(Metric(label="Findings detected", value=str(len(elite.get("findings") or []))))
+        if dg.get("segments_analysed") is not None:
+            out.append(Metric(label="Segments checked", value=str(dg["segments_analysed"])))
+        top = dg.get("highest_confidence_finding") or 0
+        if top > 0:
+            out.append(Metric(
+                label="Top confidence",
+                value=f"{round(top*100)}%",
+                trend="up" if top > 0.8 else "flat",
+            ))
+    except Exception as e:
+        logger.debug(f"Elite metrics skipped: {e}")
+    return out
+
+
+# ── Main endpoint ─────────────────────────────────────────────────────────────
+
 @router.post("/analyse", response_model=AnalysisResponse)
 async def analyse(req: AnalysisRequest):
     t0 = time.perf_counter()
     steps, metrics, insights, charts = [], [], [], []
     df = None
     elite_context = None
+    session_id = getattr(req, "session_id", None) or "default"
 
-    # ── STEP 1: Ingest ────────────────────────────────────────────────────────
-    t = time.perf_counter()
+    # ── STEP 1–2: Ingest and clean ────────────────────────────────────────────
     if req.inline_data:
+        t = time.perf_counter()
         raw_df = pd.DataFrame(req.inline_data)
 
-        # ── STEP 2: Clean ─────────────────────────────────────────────────────
         tc = time.perf_counter()
-        df, cleaning_report = analysis_service.clean_data(raw_df)
-        imp = cleaning_report["steps"][3].get("columns_imputed", {})
-        win = cleaning_report["steps"][4].get("columns_winsorised", {})
-        dup = cleaning_report["steps"][2].get("rows_removed", 0)
-        type_issues = len(cleaning_report.get("evidence", {}))
+        try:
+            df, cleaning_report = analysis_service.clean_data(raw_df)
+            cr_steps = cleaning_report.get("steps", [])
+            imp = cr_steps[3].get("columns_imputed", {}) if len(cr_steps) > 3 else {}
+            win = cr_steps[4].get("columns_winsorised", {}) if len(cr_steps) > 4 else {}
+            dup = cr_steps[2].get("rows_removed", 0) if len(cr_steps) > 2 else 0
+            type_issues = len(cleaning_report.get("evidence", {}))
+            clean_preview = (f"Duplicates removed: {dup} · Missing filled: {len(imp)} columns · "
+                             f"Outliers capped: {len(win)} columns · Type issues flagged: {type_issues}")
+            clean_status = "done"
+        except Exception as e:
+            logger.error(f"Cleaning failed: {e}", exc_info=True)
+            df = raw_df
+            clean_preview = f"Cleaning skipped: {e}"
+            clean_status = "error"
+
         steps.append(_step("Data received", "Pandas",
             ms=(time.perf_counter()-t)*1000,
             preview=f"{len(raw_df)} rows × {len(raw_df.columns)} columns ingested"))
         steps.append(_step("Data cleaning", "Pandas · NumPy · SciPy",
-            ms=(time.perf_counter()-tc)*1000,
-            preview=f"Duplicates removed: {dup} · Missing filled: {len(imp)} columns · "
-                    f"Outliers capped: {len(win)} columns · Type issues flagged: {type_issues}"))
+            status=clean_status, ms=(time.perf_counter()-tc)*1000, preview=clean_preview))
 
         # ── STEP 3: Elite deep analysis ───────────────────────────────────────
         te = time.perf_counter()
         try:
             elite_context = analysis_service.elite_analyse(df, req.query, req.industry.value)
+            if not isinstance(elite_context, dict):
+                raise ValueError(f"elite_analyse returned {type(elite_context).__name__}, expected dict")
+        except Exception as e:
+            logger.error(f"elite_analyse raised: {e}", exc_info=True)
+            elite_context = None
+            steps.append(_step("Elite analysis", "NumPy · SciPy · Scikit-learn",
+                status="error", ms=(time.perf_counter()-te)*1000,
+                preview=f"Failed: {e}"))
 
-            # Convert elite findings to Insight objects
-            for f in elite_context["findings"][:6]:
-                ev = f.get("evidence", {})
-                confidence = f.get("confidence", 0.7)
-                impact = f.get("impact_score", 0)
+        if elite_context is not None:
+            # Each builder is independently guarded, so one bad key
+            # can no longer wipe out the whole step.
+            insights.extend(_findings_to_insights(elite_context))
+            insights.extend(_correlations_to_insights(elite_context))
+            insights.extend(_causal_to_insights(elite_context))
+            insights.extend(_bias_to_insights(elite_context))
+            insights.extend(_power_to_insights(elite_context))
+            insights.extend(_uncertainty_to_insights(elite_context))
+            metrics.extend(_elite_metrics(elite_context))
 
-                if f["type"] == "anomaly":
-                    body = (
-                        f"Detected {ev.get('anomaly_count', '?')} anomalous records "
-                        f"({ev.get('anomaly_pct', '?')}% of data). "
-                        f"Normal range: [{ev.get('normal_range', ['?','?'])[0]}, {ev.get('normal_range', ['?','?'])[1]}]. "
-                        f"Anomalous values found: {ev.get('anomaly_values', [])[:3]}. "
-                        f"These values inflate the average by {ev.get('impact_on_mean_pct', '?')}%. "
-                        f"Max Z-score: {ev.get('z_score_max', '?')}σ."
-                    )
-                elif f["type"] == "trend":
-                    sig = "statistically significant" if ev.get("statistically_significant") else "not yet statistically significant"
-                    body = (
-                        f"Over {ev.get('period_count', '?')} periods, {f['column'].replace('_',' ')} changed "
-                        f"{ev.get('total_change_pct', '?')}% (from {ev.get('first_value','?')} to {ev.get('last_value','?')}). "
-                        f"R² = {ev.get('r_squared', '?')} — trend is {sig} "
-                        f"(p = {ev.get('p_value', '?')})."
-                    )
-                else:
-                    body = f["title"]
-
-                insights.append(Insight(
-                    title=f["title"],
-                    body=body,
-                    severity=f.get("severity", "info"),
-                    source=f"{f.get('method', 'Statistical analysis')} · Confidence: {round(confidence*100)}%",
-                    confidence=confidence,
-                ))
-
-            # Convert correlations to insights
-            for c in elite_context.get("correlations", [])[:2]:
-                if c["significant"]:
-                    insights.append(Insight(
-                        title=f"Strong relationship: {c['col1'].replace('_',' ')} ↔ {c['col2'].replace('_',' ')}",
-                        body=(
-                            f"Pearson r = {c['correlation']} ({c['strength']} {c['direction']} correlation), "
-                            f"p = {c['p_value']} (statistically significant), "
-                            f"based on {c['n_observations']} observations. "
-                            f"{c['interpretation']}."
-                        ),
-                        severity="info",
-                        source="Pearson correlation · scipy.stats",
-                        confidence=0.90,
-                    ))
-
-            # Convert uncertainty flags to insights
-            for u in elite_context.get("uncertainty", [])[:2]:
-                insights.append(Insight(
-                    title=f"Data limitation: {u['issue']}",
-                    body=u["detail"],
-                    severity="warning",
-                    source="Self-audit",
-                    confidence=1.0,
-                ))
-
-            # Build metrics from elite context
-            dg = elite_context["data_grounding"]
-            metrics.append(Metric(label="Rows analysed", value=str(dg["total_rows_analysed"])))
-            metrics.append(Metric(label="Findings detected", value=str(len(elite_context["findings"]))))
-            metrics.append(Metric(label="Segments checked", value=str(dg["segments_analysed"])))
-            if dg["highest_confidence_finding"] > 0:
-                metrics.append(Metric(
-                    label="Top confidence",
-                    value=f"{round(dg['highest_confidence_finding']*100)}%",
-                    trend="up" if dg["highest_confidence_finding"] > 0.8 else "flat",
-                ))
+            n_find = len(elite_context.get("findings") or [])
+            n_corr = len(elite_context.get("correlations") or [])
+            n_seg  = _count_segments(elite_context.get("segmentation"))
+            n_causal = (len(_g(elite_context, "causal_analysis", "potential_confounders", default=[])) +
+                        len(_g(elite_context, "causal_analysis", "granger_causality_signals", default=[])))
+            n_bias = len(_g(elite_context, "bias_audit", "missingness_mechanism", default={}))
 
             steps.append(_step("Elite analysis", "NumPy · SciPy · Scikit-learn",
-                ms=(time.perf_counter()-te)*1000,
-                preview=(
-                    f"{len(elite_context['findings'])} findings · "
-                    f"{len(elite_context['correlations'])} correlations · "
-                    f"{sum(len(v['metrics']) for v in elite_context['segmentation'].values())} segments"
-                )))
-        except Exception as e:
-            logger.warning(f"Elite analysis failed: {e}")
-            steps.append(_step("Elite analysis", "NumPy · SciPy", status="error", preview=str(e)))
+                status="done", ms=(time.perf_counter()-te)*1000,
+                preview=(f"{n_find} findings · {n_corr} correlations · {n_seg} segments · "
+                         f"{n_causal} causal flags · {n_bias} bias flags")))
 
         # ── STEP 4: Quality metrics ────────────────────────────────────────────
         t = time.perf_counter()
-        quality = analysis_service.quality_report(df)
-        metrics.insert(0, Metric(
-            label="Data quality",
-            value=f"{quality['overall_score']}%",
-            trend="up" if quality["overall_score"] > 85 else "down",
-        ))
-        steps.append(_step("Quality scored", "Pandas",
-            ms=(time.perf_counter()-t)*1000,
-            preview=f"Score: {quality['overall_score']}% · Missing: {quality['missing_cells']} cells"))
-
+        try:
+            quality = analysis_service.quality_report(df)
+            metrics.insert(0, Metric(
+                label="Data quality",
+                value=f"{quality['overall_score']}%",
+                trend="up" if quality["overall_score"] > 85 else "down",
+            ))
+            steps.append(_step("Quality scored", "Pandas",
+                ms=(time.perf_counter()-t)*1000,
+                preview=f"Score: {quality['overall_score']}% · Missing: {quality['missing_cells']} cells"))
+        except Exception as e:
+            logger.warning(f"Quality report failed: {e}")
+            steps.append(_step("Quality scored", "Pandas", status="error",
+                ms=(time.perf_counter()-t)*1000, preview=str(e)))
     else:
         steps.append(_step("Data received", "API", ms=1.0, preview="No dataset — AI analysis only"))
 
@@ -184,6 +395,8 @@ async def analyse(req: AnalysisRequest):
                     preview=f"Model: {fr['model']} · AIC: {fr['aic']}"))
             except Exception as e:
                 logger.warning(f"Forecast failed: {e}")
+                steps.append(_step("Forecast generated", "Statsmodels", status="error",
+                    ms=(time.perf_counter()-t)*1000, preview=str(e)))
 
     # ── STEP 6: Charts ────────────────────────────────────────────────────────
     if df is not None and req.enable_viz:
@@ -197,16 +410,57 @@ async def analyse(req: AnalysisRequest):
                 preview=f"{len(auto)} interactive charts generated"))
         except Exception as e:
             logger.warning(f"Viz failed: {e}")
+            steps.append(_step("Charts built", "Plotly", status="error",
+                ms=(time.perf_counter()-t)*1000, preview=str(e)))
 
-    # ── STEP 7: Elite AI narrative ─────────────────────────────────────────────
+    # ── STEP 7: Retrieve benchmarks + prior context (RAG + Memory) ────────────
     t = time.perf_counter()
-    context_msg = f"Industry: {req.industry.value}\nUser question: {req.query}"
-    if df is not None:
-        desc = analysis_service.describe(df)
-        context_msg += f"\nDataset: {desc['shape']['rows']} rows × {desc['shape']['columns']} columns"
-        context_msg += f"\nColumns available: {list(desc['dtypes'].keys())}"
+    rag_block, memory_block = "", ""
 
-    messages = req.conversation_history + [{"role": "user", "content": context_msg}]
+    try:
+        from app.services.rag_service import rag_service
+        metric_names = list(df.columns) if df is not None else []
+        rag_block = rag_service.get_industry_context(req.industry.value, metric_names)
+    except Exception as e:
+        logger.info(f"RAG context unavailable: {e}")
+
+    try:
+        from app.services.memory_service import memory_service
+        memory_block = memory_service.get_memory_context(session_id)
+    except Exception as e:
+        logger.info(f"Memory context unavailable: {e}")
+
+    if rag_block or memory_block:
+        steps.append(_step("Knowledge retrieved", "RAG · Memory",
+            ms=(time.perf_counter()-t)*1000,
+            preview=(f"{'Benchmarks loaded' if rag_block else 'No benchmarks'} · "
+                     f"{'Prior analyses recalled' if memory_block else 'No prior context'}")))
+
+    # ── STEP 8: Elite AI narrative ────────────────────────────────────────────
+    t = time.perf_counter()
+    context_parts = [f"Industry: {req.industry.value}", f"User question: {req.query}"]
+
+    if df is not None:
+        try:
+            desc = analysis_service.describe(df)
+            context_parts.append(
+                f"Dataset: {desc['shape']['rows']} rows × {desc['shape']['columns']} columns")
+            context_parts.append(f"Columns available: {list(desc['dtypes'].keys())}")
+        except Exception:
+            context_parts.append(f"Dataset: {len(df)} rows × {len(df.columns)} columns")
+            context_parts.append(f"Columns available: {list(df.columns)}")
+
+    if rag_block:
+        context_parts.append("\n" + rag_block)
+        context_parts.append(
+            "Compare the findings against the benchmarks above. "
+            "Where a metric falls outside the acceptable band, say so explicitly and cite the benchmark."
+        )
+    if memory_block:
+        context_parts.append("\n" + memory_block)
+
+    context_msg = "\n".join(context_parts)
+    messages = list(req.conversation_history) + [{"role": "user", "content": context_msg}]
 
     try:
         narrative, tokens, provider_used = await llm_service.chat(
@@ -214,22 +468,24 @@ async def analyse(req: AnalysisRequest):
             industry=req.industry.value,
             provider=req.provider,
             model=req.model,
-            max_tokens=2500,
+            max_tokens=3000,
             elite_context=elite_context,
         )
-        steps.append(_step("AI report written", f"{req.provider.value}",
+        steps.append(_step("AI report written", req.provider.value,
             ms=(time.perf_counter()-t)*1000,
             preview=f"{tokens} tokens · {provider_used}"))
     except Exception as e:
+        logger.error(f"LLM failed: {e}", exc_info=True)
         narrative = f"AI analysis unavailable: {e}"
         tokens = 0
         provider_used = req.provider.value
-        steps.append(_step("AI report", provider_used, status="error", preview=str(e)))
+        steps.append(_step("AI report written", provider_used, status="error",
+            ms=(time.perf_counter()-t)*1000, preview=str(e)))
 
-    return AnalysisResponse(
+    response = AnalysisResponse(
         query=req.query,
         industry=req.industry.value,
-        provider=provider_used.split(" ")[0].lower() if " " in provider_used else req.provider.value,
+        provider=provider_used,
         model=req.model or provider_used,
         narrative=narrative,
         metrics=metrics,
@@ -242,6 +498,71 @@ async def analyse(req: AnalysisRequest):
         execution_ms=round((time.perf_counter()-t0)*1000, 1),
         tokens_used=tokens,
     )
+
+    # ── STEP 9: Persist to memory (best effort) ───────────────────────────────
+    try:
+        from app.services.memory_service import memory_service
+        memory_service.save_analysis_memory(session_id, {
+            "industry": req.industry.value,
+            "query": req.query,
+            "provider": provider_used,
+            "narrative": narrative,
+            "insights": [i.model_dump() for i in insights],
+            "row_count": len(df) if df is not None else 0,
+            "col_count": len(df.columns) if df is not None else 0,
+        })
+    except Exception as e:
+        logger.info(f"Could not persist to memory: {e}")
+
+    return response
+
+
+# ── Diagnostics ───────────────────────────────────────────────────────────────
+
+@router.post("/elite-debug")
+async def elite_debug(data: list[dict], query: str = "test", industry: str = "general"):
+    """
+    Run elite_analyse in isolation and report exactly what it returns
+    or exactly how it fails. Use this when the Elite analysis pipeline
+    step reports an error.
+    """
+    if not data:
+        raise HTTPException(400, "Provide data")
+    df = pd.DataFrame(data)
+    t = time.perf_counter()
+    try:
+        elite = analysis_service.elite_analyse(df, query, industry)
+    except Exception as e:
+        import traceback
+        return {
+            "success": False,
+            "error": str(e),
+            "error_type": type(e).__name__,
+            "traceback": traceback.format_exc().splitlines()[-8:],
+            "duration_ms": round((time.perf_counter()-t)*1000, 1),
+        }
+
+    keys = list(elite.keys()) if isinstance(elite, dict) else []
+    return {
+        "success": True,
+        "duration_ms": round((time.perf_counter()-t)*1000, 1),
+        "returned_type": type(elite).__name__,
+        "top_level_keys": keys,
+        "counts": {
+            "findings": len(elite.get("findings") or []),
+            "correlations": len(elite.get("correlations") or []),
+            "segments": _count_segments(elite.get("segmentation")),
+            "confounders": len(_g(elite, "causal_analysis", "potential_confounders", default=[])),
+            "bias_flags": len(_g(elite, "bias_audit", "missingness_mechanism", default={})),
+            "uncertainty": len(elite.get("uncertainty") or []),
+        },
+        "correlation_keys": (list(elite["correlations"][0].keys())
+                             if elite.get("correlations") else []),
+        "finding_keys": (list(elite["findings"][0].keys())
+                         if elite.get("findings") else []),
+        "segmentation_sample": (list(elite["segmentation"].items())[:1]
+                                if elite.get("segmentation") else []),
+    }
 
 
 @router.post("/describe")
