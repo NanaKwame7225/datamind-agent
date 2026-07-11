@@ -1,135 +1,139 @@
 """
-DataMind Agent v2 — Auth Router
-POST /api/v2/auth/register
-POST /api/v2/auth/login
-POST /api/v2/auth/refresh
-GET  /api/v2/auth/me
-PUT  /api/v2/auth/me
-POST /api/v2/auth/logout
-GET  /api/v2/auth/usage
+DataMind Agent — Auth & History Router
+
+Auth:
+  POST /api/v1/auth/register   {email, password, name?, guest_id?}
+  POST /api/v1/auth/login      {email, password}
+  POST /api/v1/auth/guest      -> throwaway session
+  GET  /api/v1/auth/me         (Authorization: Bearer <token>)
+  GET  /api/v1/auth/status     -> is auth/DB configured?
+
+History (all require a token):
+  POST   /api/v1/auth/history          save an analysis
+  GET    /api/v1/auth/history          list my analyses
+  GET    /api/v1/auth/history/{id}     get one
+  PATCH  /api/v1/auth/history/{id}     rename
+  DELETE /api/v1/auth/history/{id}     delete
 """
-from fastapi import APIRouter, HTTPException, Depends
-from app.models.user import UserCreate, UserLogin, UserOut, TokenResponse
-from app.services.auth_service import (
-    create_user, authenticate_user, create_access_token,
-    create_refresh_token, get_current_user, get_usage_stats,
-    get_db, get_user_by_id
-)
 import logging
-from datetime import datetime, timezone
+from fastapi import APIRouter, Header, HTTPException
+from pydantic import BaseModel
+from typing import Optional
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
-@router.post("/register", response_model=TokenResponse, status_code=201)
-async def register(data: UserCreate):
-    """Create a new account."""
-    user = create_user(data)
-    access_token  = create_access_token(user.id, user.email)
-    refresh_token = create_refresh_token(user.id)
-    logger.info(f"New registration: {data.email}")
-    return TokenResponse(
-        access_token=access_token,
-        refresh_token=refresh_token,
-        expires_in=60 * 60 * 8,
-        user=user,
-    )
+def _auth():
+    from app.services.auth_service import auth_service
+    return auth_service
+
+def _history():
+    from app.services.history_service import history_service
+    return history_service
 
 
-@router.post("/login", response_model=TokenResponse)
-async def login(data: UserLogin):
-    """Log in with email and password."""
-    user_dict = authenticate_user(data.email, data.password)
-    if not user_dict:
-        raise HTTPException(status_code=401, detail="Incorrect email or password")
-    user = get_user_by_id(user_dict["id"])
-    if not user.is_active:
-        raise HTTPException(status_code=403, detail="Account is disabled. Contact support.")
-    access_token  = create_access_token(user.id, user.email)
-    refresh_token = create_refresh_token(user.id)
-    logger.info(f"Login: {data.email}")
-    return TokenResponse(
-        access_token=access_token,
-        refresh_token=refresh_token,
-        expires_in=60 * 60 * 8,
-        user=user,
-    )
+async def current_user(authorization: Optional[str] = Header(None)) -> Optional[dict]:
+    """Resolve the bearer token to a user, or None if absent/invalid."""
+    if not authorization or not authorization.lower().startswith("bearer "):
+        return None
+    token = authorization.split(" ", 1)[1].strip()
+    return await _auth().user_from_token(token)
 
 
-@router.post("/refresh", response_model=TokenResponse)
-async def refresh_token(refresh_token: str):
-    """Get a new access token using a refresh token."""
-    conn = get_db()
-    row = conn.execute(
-        "SELECT * FROM refresh_tokens WHERE token=? AND revoked=0", (refresh_token,)
-    ).fetchone()
-    if not row:
-        conn.close()
-        raise HTTPException(status_code=401, detail="Invalid or expired refresh token")
-    row = dict(row)
-    expires = datetime.fromisoformat(row["expires_at"])
-    if expires < datetime.now(timezone.utc):
-        conn.close()
-        raise HTTPException(status_code=401, detail="Refresh token has expired. Please log in again.")
-    # Revoke old refresh token (rotation)
-    conn.execute("UPDATE refresh_tokens SET revoked=1 WHERE token=?", (refresh_token,))
-    conn.commit()
-    conn.close()
-    user = get_user_by_id(row["user_id"])
+async def require_user(authorization: Optional[str] = Header(None)) -> dict:
+    user = await current_user(authorization)
     if not user:
-        raise HTTPException(status_code=401, detail="User not found")
-    new_access  = create_access_token(user.id, user.email)
-    new_refresh = create_refresh_token(user.id)
-    return TokenResponse(
-        access_token=new_access,
-        refresh_token=new_refresh,
-        expires_in=60 * 60 * 8,
-        user=user,
-    )
+        raise HTTPException(status_code=401, detail="Sign in to continue.")
+    return user
 
 
-@router.get("/me", response_model=UserOut)
-async def get_me(current_user: UserOut = Depends(get_current_user)):
-    """Get your profile."""
-    return current_user
+# ── Schemas ───────────────────────────────────────────────────────────────────
+class RegisterReq(BaseModel):
+    email: str
+    password: str
+    name: Optional[str] = ""
+    guest_id: Optional[str] = None
+
+class LoginReq(BaseModel):
+    email: str
+    password: str
+
+class SaveReq(BaseModel):
+    query: Optional[str] = ""
+    industry: Optional[str] = "general"
+    result: Optional[dict] = None
+    row_count: Optional[int] = None
+    col_count: Optional[int] = None
+    columns: Optional[list] = None
+    data_preview: Optional[list] = None
+    source: Optional[str] = None
+
+class RenameReq(BaseModel):
+    title: str
 
 
-@router.put("/me", response_model=UserOut)
-async def update_me(
-    updates: dict,
-    current_user: UserOut = Depends(get_current_user)
-):
-    """Update your profile (full_name, company, industry)."""
-    allowed = {"full_name", "company", "industry"}
-    safe = {k: v for k, v in updates.items() if k in allowed}
-    if not safe:
-        raise HTTPException(400, "No valid fields to update")
-    conn = get_db()
-    sets = ", ".join([f"{k}=?" for k in safe])
-    conn.execute(f"UPDATE users SET {sets} WHERE id=?", list(safe.values()) + [current_user.id])
-    conn.commit()
-    conn.close()
-    return get_user_by_id(current_user.id)
+# ── Auth endpoints ────────────────────────────────────────────────────────────
+@router.post("/register")
+async def register(req: RegisterReq):
+    return await _auth().register(req.email, req.password, req.name or "", req.guest_id)
+
+@router.post("/login")
+async def login(req: LoginReq):
+    return await _auth().login(req.email, req.password)
+
+@router.post("/guest")
+async def guest():
+    return await _auth().guest()
+
+@router.get("/me")
+async def me(authorization: Optional[str] = Header(None)):
+    if not authorization or not authorization.lower().startswith("bearer "):
+        return {"success": False, "error": "No token provided."}
+    return await _auth().me(authorization.split(" ", 1)[1].strip())
+
+@router.get("/status")
+async def status():
+    from app.database import status as db_status
+    ds = db_status()
+    return {"auth_enabled": ds.get("configured", False),
+            "database": ds, "guest_mode": True}
 
 
-@router.post("/logout")
-async def logout(
-    refresh_token: str,
-    current_user: UserOut = Depends(get_current_user)
-):
-    """Revoke refresh token on logout."""
-    conn = get_db()
-    conn.execute(
-        "UPDATE refresh_tokens SET revoked=1 WHERE token=? AND user_id=?",
-        (refresh_token, current_user.id)
-    )
-    conn.commit()
-    conn.close()
-    return {"message": "Logged out successfully"}
+# ── History endpoints ─────────────────────────────────────────────────────────
+@router.post("/history")
+async def save_history(req: SaveReq, authorization: Optional[str] = Header(None)):
+    user = await current_user(authorization)
+    if not user:
+        raise HTTPException(status_code=401, detail="Sign in to save analyses.")
+    return await _history().save(user["_id"], req.dict())
 
+@router.get("/history")
+async def list_history(limit: int = 50, skip: int = 0,
+                       authorization: Optional[str] = Header(None)):
+    user = await current_user(authorization)
+    if not user:
+        return {"success": True, "items": [], "total": 0}
+    return await _history().list(user["_id"], limit, skip)
 
-@router.get("/usage")
-async def get_usage(current_user: UserOut = Depends(get_current_user)):
-    """Get your usage statistics for this month."""
-    return get_usage_stats(current_user.id)
+@router.get("/history/{analysis_id}")
+async def get_history(analysis_id: str, authorization: Optional[str] = Header(None)):
+    user = await current_user(authorization)
+    if not user:
+        raise HTTPException(status_code=401, detail="Sign in to view saved analyses.")
+    return await _history().get(user["_id"], analysis_id)
+
+@router.patch("/history/{analysis_id}")
+async def rename_history(analysis_id: str, req: RenameReq,
+                         authorization: Optional[str] = Header(None)):
+    user = await current_user(authorization)
+    if not user:
+        raise HTTPException(status_code=401, detail="Sign in to edit saved analyses.")
+    return await _history().rename(user["_id"], analysis_id, req.title)
+
+@router.delete("/history/{analysis_id}")
+async def delete_history(analysis_id: str, authorization: Optional[str] = Header(None)):
+    user = await current_user(authorization)
+    if not user:
+        raise HTTPException(status_code=401, detail="Sign in to delete saved analyses.")
+    return await _history().delete(user["_id"], analysis_id)
