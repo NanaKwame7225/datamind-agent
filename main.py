@@ -114,6 +114,14 @@ try:
 except Exception as e:
     logger.error(f"Auth router failed: {e}", exc_info=True)
 
+# ── Scheduled reports router ──────────────────────────────────────────────────
+try:
+    from app.routers import schedule as schedule_router
+    app.include_router(schedule_router.router, prefix="/api/v1/schedules", tags=["Scheduled Reports"])
+    logger.info("Schedules router loaded")
+except Exception as e:
+    logger.error(f"Schedules router failed: {e}", exc_info=True)
+
 # ── Database warm-up (auth + history) ─────────────────────────────────────────
 @app.on_event("startup")
 async def _startup_db():
@@ -123,6 +131,12 @@ async def _startup_db():
         logger.info(f"Database status: {db_status()}")
     except Exception as e:
         logger.error(f"Database warm-up failed: {e}", exc_info=True)
+    # Start the background scheduler for reports
+    try:
+        from app.scheduler_loop import start as start_scheduler
+        start_scheduler()
+    except Exception as e:
+        logger.error(f"Scheduler start failed: {e}", exc_info=True)
 
 
 
