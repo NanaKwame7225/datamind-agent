@@ -106,6 +106,25 @@ try:
 except Exception as e:
     logger.error(f"Transcription router failed: {e}", exc_info=True)
 
+# ── Auth + saved history router (accounts, login, guest, history) ─────────────
+try:
+    from app.routers import auth as auth_router
+    app.include_router(auth_router.router, prefix="/api/v1/auth", tags=["Auth"])
+    logger.info("Auth router loaded")
+except Exception as e:
+    logger.error(f"Auth router failed: {e}", exc_info=True)
+
+# ── Database warm-up (auth + history) ─────────────────────────────────────────
+@app.on_event("startup")
+async def _startup_db():
+    try:
+        from app.database import connect, status as db_status
+        await connect()
+        logger.info(f"Database status: {db_status()}")
+    except Exception as e:
+        logger.error(f"Database warm-up failed: {e}", exc_info=True)
+
+
 
 @app.get("/")
 async def root():
