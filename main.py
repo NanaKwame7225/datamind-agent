@@ -90,6 +90,14 @@ try:
 except Exception as e:
     logger.error(f"Forecast router failed: {e}", exc_info=True)
 
+# ── URL ingestion router (Google Sheets, Dropbox, S3, GitHub…) ────────────────
+try:
+    from app.routers import url as url_router
+    app.include_router(url_router.router, prefix="/api/v1/url", tags=["URL Ingestion"])
+    logger.info("URL ingestion router loaded")
+except Exception as e:
+    logger.error(f"URL router failed: {e}", exc_info=True)
+
 
 @app.get("/")
 async def root():
@@ -104,7 +112,8 @@ async def root():
             "sql": "DuckDB in-process SQL engine",
             "memory": "SQLite persistent conversation memory",
             "rag": "Industry benchmarks + domain knowledge retrieval",
-            "parsing": "Excel, PDF, CSV, JSON, Parquet — single or multi-file",
+            "parsing": "Excel, PDF, CSV, JSON, Parquet — files, multi-file, or a link",
+            "ingestion": "Google Sheets, Drive, Dropbox, OneDrive, GitHub, S3 — no OAuth",
             "viz": "Plotly interactive charts",
             "export": "Word, PDF, PowerPoint",
         },
@@ -118,6 +127,8 @@ async def root():
             "scenario":   "/api/v1/forecast/scenario",
             "upload":     "/api/v1/upload/parse",
             "upload_multi": "/api/v1/upload/parse-multi",
+            "url_parse":  "/api/v1/url/parse",
+            "url_sources":"/api/v1/url/sources",
             "export_pptx":  "/api/v1/export/pptx",
         },
         "docs": "/docs",
