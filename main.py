@@ -98,6 +98,14 @@ try:
 except Exception as e:
     logger.error(f"URL router failed: {e}", exc_info=True)
 
+# ── Voice transcription router (all-device voice input) ───────────────────────
+try:
+    from app.routers import transcribe as transcribe_router
+    app.include_router(transcribe_router.router, prefix="/api/v1/transcribe", tags=["Voice"])
+    logger.info("Transcription router loaded")
+except Exception as e:
+    logger.error(f"Transcription router failed: {e}", exc_info=True)
+
 
 @app.get("/")
 async def root():
