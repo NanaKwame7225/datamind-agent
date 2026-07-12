@@ -84,11 +84,15 @@ class NotifyService:
             return {"success": False, "error": str(e)}
 
     # ── SMS (Mnotify) ─────────────────────────────────────────────────────────
+    def _mnotify_key(self):
+        # Accept either name — MNOTIFY_KEY matches the other NkaySolutions apps.
+        return _get("MNOTIFY_API_KEY") or _get("MNOTIFY_KEY")
+
     def sms_configured(self) -> bool:
-        return bool(_get("MNOTIFY_API_KEY"))
+        return bool(self._mnotify_key())
 
     def send_sms(self, to: str, message: str) -> dict:
-        key = _get("MNOTIFY_API_KEY")
+        key = self._mnotify_key()
         sender = _get("MNOTIFY_SENDER_ID") or "NkaySolutions"
         if not key:
             return {"success": False, "error": "SMS not configured (no MNOTIFY_API_KEY)."}
