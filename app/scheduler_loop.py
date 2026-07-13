@@ -23,6 +23,7 @@ async def _loop():
     logger.info("Scheduler loop started (ticks every %ss)", TICK_SECONDS)
     # Small initial delay so startup finishes first
     await asyncio.sleep(10)
+    ticks = 0
     while _running:
         try:
             from app.services.schedule_service import schedule_service
@@ -31,9 +32,35 @@ async def _loop():
                 res = await schedule_service.run_due()
                 if res.get("ran"):
                     logger.info("Scheduler ran %s due report(s)", res["ran"])
+            # Keep-warm: every ~4 minutes, self-ping the public URL so Railway
+            # sees inbound traffic and doesn't spin the container down. Only
+            # works if PUBLIC_URL / RAILWAY_PUBLIC_DOMAIN is set.
+            ticks += 1
+            if ticks % 4 == 0:
+                await _self_ping()
         except Exception as e:
             logger.error("Scheduler tick failed: %s", e)
         await asyncio.sleep(TICK_SECONDS)
+
+
+async def _self_ping():
+    import os
+    url = os.environ.get("PUBLIC_URL")
+    if not url:
+        dom = os.environ.get("RAILWAY_PUBLIC_DOMAIN")
+        if dom:
+            url = f"https://{dom}"
+    if not url:
+        return
+    try:
+        import urllib.request
+        req = urllib.request.Request(url.rstrip("/") + "/health",
+                                     headers={"User-Agent": "datamind-keepwarm"})
+        # Run the blocking call in a thread so we don't stall the loop
+        await asyncio.get_event_loop().run_in_executor(
+            None, lambda: urllib.request.urlopen(req, timeout=15))
+    except Exception:
+        pass  # keep-warm is best-effort; never let it break the loop
 
 
 def start():
