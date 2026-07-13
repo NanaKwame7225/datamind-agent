@@ -93,6 +93,7 @@ class ScheduleService:
             "query": query,
             "industry": payload.get("industry", "general"),
             "data": data[:5000],                 # cap stored rows
+            "row_count": len(data[:5000]),       # stored so list view can show it
             "columns": payload.get("columns", []),
             "frequency": payload.get("frequency", "weekly"),
             "hour": int(payload.get("hour", 8)),
@@ -126,7 +127,7 @@ class ScheduleService:
             "weekday": d.get("weekday"), "day": d.get("day"),
             "channels": {k: v for k, v in (d.get("channels") or {}).items()},
             "active": d.get("active", True),
-            "row_count": len(d.get("data") or []),
+            "row_count": d.get("row_count", len(d.get("data") or [])),
             "next_run": _iso(d.get("next_run")),
             "last_run": _iso(d.get("last_run")),
             "last_status": d.get("last_status"),
