@@ -201,6 +201,15 @@ class ScheduleService:
 
     async def _execute(self, col, d: dict) -> dict:
         """Run one report: analyse → save to history → deliver on channels."""
+        # A schedule with no data can never produce a report. Pause it so it
+        # stops retrying every minute, and report clearly.
+        if not (d.get("data") or []):
+            await col.update_one({"_id": d["_id"]}, {"$set": {
+                "active": False,
+                "last_status": "no data — schedule paused. Recreate it with data attached.",
+                "last_run": now(),
+            }})
+            return {"success": False, "error": "This schedule has no data attached. It has been paused — delete it and create a new one after uploading data."}
         result = await self._analyse(d)
         chan = d.get("channels") or {}
         delivered = {"in_app": False, "email": None, "sms": None}
@@ -232,9 +241,10 @@ class ScheduleService:
 
         status = "ok"
         if chan.get("email") and delivered["email"] and not delivered["email"].get("success"):
-            status = "email failed"
+            status = "email failed: " + str(delivered["email"].get("error", ""))[:80]
         if chan.get("sms") and delivered["sms"] and not delivered["sms"].get("success"):
-            status = (status + "; sms failed") if status != "ok" else "sms failed"
+            smsmsg = "sms failed: " + str(delivered["sms"].get("error", ""))[:80]
+            status = (status + "; " + smsmsg) if status != "ok" else smsmsg
 
         await col.update_one({"_id": d["_id"]}, {"$set": {
             "last_run": now(), "last_status": status,
