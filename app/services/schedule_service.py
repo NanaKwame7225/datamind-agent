@@ -240,12 +240,24 @@ class ScheduleService:
         if chan.get("sms") and chan.get("sms_to"):
             delivered["sms"] = notify_service.send_sms(chan["sms_to"], summary)
 
-        status = "ok"
-        if chan.get("email") and delivered["email"] and not delivered["email"].get("success"):
-            status = "email failed: " + str(delivered["email"].get("error", ""))[:80]
-        if chan.get("sms") and delivered["sms"] and not delivered["sms"].get("success"):
-            smsmsg = "sms failed: " + str(delivered["sms"].get("error", ""))[:80]
-            status = (status + "; " + smsmsg) if status != "ok" else smsmsg
+        # Build an honest status that reports what SUCCEEDED, not just failures.
+        ok_parts, fail_parts = [], []
+        if delivered["in_app"]:
+            ok_parts.append("saved to history")
+        if chan.get("email"):
+            if delivered["email"] and delivered["email"].get("success"):
+                ok_parts.append("emailed")
+            elif delivered["email"]:
+                fail_parts.append("email needs a verified domain")
+        if chan.get("sms"):
+            if delivered["sms"] and delivered["sms"].get("success"):
+                ok_parts.append("texted")
+            elif delivered["sms"]:
+                fail_parts.append("sms failed: " + str(delivered["sms"].get("error", ""))[:60])
+
+        status = " · ".join(ok_parts) if ok_parts else "ran"
+        if fail_parts:
+            status += " (" + "; ".join(fail_parts) + ")"
 
         await col.update_one({"_id": d["_id"]}, {"$set": {
             "last_run": now(), "last_status": status,
