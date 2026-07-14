@@ -122,6 +122,14 @@ try:
 except Exception as e:
     logger.error(f"Schedules router failed: {e}", exc_info=True)
 
+# ── Workspaces router (shared spaces, roles, invites) ─────────────────────────
+try:
+    from app.routers import workspace as workspace_router
+    app.include_router(workspace_router.router, prefix="/api/v1/workspaces", tags=["Workspaces"])
+    logger.info("Workspaces router loaded")
+except Exception as e:
+    logger.error(f"Workspaces router failed: {e}", exc_info=True)
+
 # ── Database warm-up (auth + history) ─────────────────────────────────────────
 @app.on_event("startup")
 async def _startup_db():
