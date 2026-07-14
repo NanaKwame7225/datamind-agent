@@ -45,7 +45,11 @@ class NotebookService:
             return {"success": False, "error": "A notebook needs data. Upload data first."}
 
         from app.services.workspace_service import is_personal
+        from app.services.agent_service import agent_service
         wid = workspace_id if (workspace_id and not is_personal(workspace_id)) else None
+        # Precompute the data summary ONCE so every cell reuses it instead of
+        # recomputing stats over thousands of rows on each run.
+        data_summary = agent_service._data_summary(data[:5000], columns)
         doc = {
             "_id": str(uuid.uuid4()),
             "user_id": user_id,
@@ -54,6 +58,7 @@ class NotebookService:
             "title": (title or "Untitled notebook").strip()[:120],
             "industry": industry or "general",
             "data": data[:5000],
+            "data_summary": data_summary,
             "row_count": len(data[:5000]),
             "columns": columns or (list(data[0].keys()) if data and isinstance(data[0], dict) else []),
             "cells": [],
@@ -124,7 +129,7 @@ class NotebookService:
 
     # ── Cells ─────────────────────────────────────────────────────────────────
     async def add_cell(self, user_id: str, notebook_id: str, question: str,
-                       workspace_id: str = None) -> dict:
+                       workspace_id: str = None, deep: bool = False) -> dict:
         """Add a question cell and run the multi-agent analysis on the notebook's data."""
         col = await self._col()
         if col is None:
@@ -137,8 +142,10 @@ class NotebookService:
             return {"success": False, "error": "Ask a question for this cell."}
 
         from app.services.agent_service import agent_service
-        result = await agent_service.analyze(
-            question, nb.get("data") or [], nb.get("columns"), nb.get("industry", "general"))
+        runner = agent_service.analyze if deep else agent_service.analyze_fast
+        result = await runner(
+            question, nb.get("data") or [], nb.get("columns"), nb.get("industry", "general"),
+            data_summary=nb.get("data_summary"))
 
         cell = {
             "id": str(uuid.uuid4()),
@@ -147,6 +154,7 @@ class NotebookService:
             "agents": result.get("agents", []),
             "emphasis": result.get("emphasis"),
             "provider": result.get("provider"),
+            "mode": "deep" if deep else "fast",
             "ok": result.get("success", False),
             "error": result.get("error") if not result.get("success") else None,
             "created_at": now(),
@@ -156,7 +164,7 @@ class NotebookService:
         return {"success": True, "cell": cell}
 
     async def rerun_cell(self, user_id: str, notebook_id: str, cell_id: str,
-                         question: str = None, workspace_id: str = None) -> dict:
+                         question: str = None, workspace_id: str = None, deep: bool = False) -> dict:
         col = await self._col()
         if col is None:
             return {"success": False, "error": "Notebooks unavailable."}
@@ -170,14 +178,17 @@ class NotebookService:
         q = (question or cells[idx]["question"]).strip()
 
         from app.services.agent_service import agent_service
-        result = await agent_service.analyze(
-            q, nb.get("data") or [], nb.get("columns"), nb.get("industry", "general"))
+        runner = agent_service.analyze if deep else agent_service.analyze_fast
+        result = await runner(
+            q, nb.get("data") or [], nb.get("columns"), nb.get("industry", "general"),
+            data_summary=nb.get("data_summary"))
         cells[idx] = {
             **cells[idx], "question": q,
             "answer": result.get("answer") if result.get("success") else None,
             "agents": result.get("agents", []),
             "emphasis": result.get("emphasis"),
             "provider": result.get("provider"),
+            "mode": "deep" if deep else "fast",
             "ok": result.get("success", False),
             "error": result.get("error") if not result.get("success") else None,
             "updated_at": now(),
