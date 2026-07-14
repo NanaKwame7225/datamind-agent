@@ -30,44 +30,60 @@ AGENTS = {
         "label": "Data Quality",
         "icon": "shield",
         "system": (
-            "You are the Data Quality specialist on an analysis panel. Examine the "
-            "dataset for completeness, missing values, outliers, duplicates, "
-            "inconsistent types, and whether the data can actually support the user's "
-            "question. Be concise and specific — cite columns and counts. Flag anything "
-            "that would make downstream conclusions unreliable. 3-5 tight findings."
+            "You are the Data Quality specialist. The user asked a SPECIFIC question — "
+            "your job is to assess whether THIS data can answer THAT question, and flag "
+            "anything about the data that would affect the answer. Cite exact columns, "
+            "counts, and values (e.g. 'revenue is null in 4 of 36 rows: Feb-North, "
+            "Mar-East...'). Do NOT give a generic data-health overview — focus on what "
+            "matters for THIS question. 2-4 specific findings with real numbers."
         ),
     },
     "trends": {
         "label": "Trends & Patterns",
         "icon": "trending",
         "system": (
-            "You are the Trends & Patterns specialist on an analysis panel. Identify "
-            "movements over time, growth/decline, correlations, seasonality, and "
-            "meaningful segments. Quantify with real numbers from the data (deltas, "
-            "percentages, rates). Focus on what is changing and how fast. 3-5 findings."
+            "You are the Trends & Patterns specialist. Answer with SPECIFIC evidence "
+            "relevant to the user's exact question. Cite real values, deltas, and names "
+            "from the data — 'North grew from 120k to 149k (+24%) while South fell 8%', "
+            "not 'there is growth'. Identify the specific segments, periods, or categories "
+            "that matter for what they asked. Do NOT summarise everything — zero in on "
+            "what answers the question. 2-4 findings, every one quantified."
         ),
     },
     "risk": {
         "label": "Risk & Anomaly",
         "icon": "alert",
         "system": (
-            "You are the Risk & Anomaly specialist on an analysis panel. Surface what is "
-            "concerning: anomalies, outliers that break the pattern, concentration risk, "
-            "sudden shifts, and things the user should watch or act on. Be direct about "
-            "severity. Avoid false alarms — only flag what the data supports. 3-5 findings."
+            "You are the Risk & Anomaly specialist. Surface the SPECIFIC risks and "
+            "anomalies relevant to the user's exact question, named precisely: which row, "
+            "which category, which value, how far from normal. 'March-North spiked to "
+            "310k, 3.2x the 96k monthly average' not 'there are some outliers'. Only flag "
+            "what the data actually supports, and only what bears on THIS question. Rank "
+            "by severity. 2-4 concrete findings."
         ),
     },
 }
 
 SYNTH_SYSTEM = (
-    "You are the lead analyst synthesising a panel of specialist findings into ONE "
-    "authoritative answer for a business user. You are given the user's question, a "
-    "data summary, and the specialists' findings (data quality, trends, risk). "
-    "Write a clear, confident, elite answer that directly answers the question. "
-    "Resolve any disagreement between specialists explicitly. Lead with the direct "
-    "answer, then the key supporting points, then any caveats or risks worth noting. "
-    "Do NOT mention 'agents' or 'specialists' or the panel mechanism — speak as one "
-    "expert. Professional, precise, no filler."
+    "You are the lead analyst writing ONE authoritative answer for a business user. "
+    "You are given the user's EXACT question, a data summary, and specialist findings.\n\n"
+    "ABSOLUTE RULES:\n"
+    "1. Answer the SPECIFIC question asked — nothing more, nothing less. If they ask "
+    "'which region is most at risk', name the region and say why; do NOT give a general "
+    "overview of all regions. If they ask 'why did March drop', explain March "
+    "specifically; do NOT summarise the whole trend.\n"
+    "2. Be CONCRETE. Cite the actual numbers, names, categories, dates, and rows from "
+    "the data — real values, not vague direction words. 'North fell 18% (from 240k to "
+    "197k)' not 'some regions declined'. Every claim must point to specific evidence.\n"
+    "3. NO generic filler. Ban phrases like 'the data shows interesting patterns', "
+    "'overall performance is strong', 'there are several factors'. If a sentence would "
+    "be true of almost any dataset, delete it.\n"
+    "4. Lead with the DIRECT answer to their exact question in the first sentence. Then "
+    "the specific evidence. Then only caveats that genuinely affect THIS answer.\n"
+    "5. If the data cannot answer the question, say exactly what's missing — don't pad "
+    "with unrelated observations.\n"
+    "Do NOT mention 'agents', 'specialists', or the panel. Speak as one expert. "
+    "Precise, specific, grounded in this dataset's actual values."
 )
 
 
@@ -86,36 +102,57 @@ def classify_question(q: str) -> str:
 class AgentService:
 
     def _data_summary(self, data: list, columns: list = None) -> str:
-        """Compact textual summary of the data for the agents (keeps tokens sane)."""
+        """Compact but detailed summary — enough for the agents to answer specifically."""
         if not data:
             return "No data provided."
         cols = columns or (list(data[0].keys()) if isinstance(data[0], dict) else [])
         n = len(data)
-        sample = data[:15]
+        sample = data[:20]
+        numeric_cols, cat_cols = {}, {}
         try:
             import statistics
-            numeric_cols = {}
             for c in cols:
-                vals = []
+                vals, missing = [], 0
+                raw = []
                 for row in data:
                     v = row.get(c) if isinstance(row, dict) else None
-                    if isinstance(v, (int, float)):
+                    if v is None or v == "":
+                        missing += 1
+                    raw.append(v)
+                    if isinstance(v, (int, float)) and not isinstance(v, bool):
                         vals.append(v)
                 if len(vals) >= 3:
+                    svals = sorted(vals)
                     numeric_cols[c] = {
                         "min": min(vals), "max": max(vals),
                         "mean": round(statistics.mean(vals), 2),
-                        "count": len(vals),
+                        "median": round(statistics.median(vals), 2),
+                        "std": round(statistics.pstdev(vals), 2) if len(vals) > 1 else 0,
+                        "count": len(vals), "missing": missing,
                     }
+                else:
+                    # treat as categorical — top values
+                    from collections import Counter
+                    non_null = [str(v) for v in raw if v is not None and v != ""]
+                    if non_null and len(set(non_null)) <= max(30, n // 2):
+                        top = Counter(non_null).most_common(6)
+                        cat_cols[c] = {"unique": len(set(non_null)), "missing": missing,
+                                       "top": top}
         except Exception:
-            numeric_cols = {}
+            pass
         lines = [f"Rows: {n}", f"Columns ({len(cols)}): {', '.join(map(str, cols))}"]
         if numeric_cols:
-            lines.append("Numeric summaries:")
-            for c, s in list(numeric_cols.items())[:12]:
-                lines.append(f"  {c}: min={s['min']} max={s['max']} mean={s['mean']} n={s['count']}")
-        lines.append("Sample rows (first 15):")
-        lines.append(json.dumps(sample, default=str)[:2500])
+            lines.append("Numeric columns (min/median/mean/max/std, missing):")
+            for c, s in list(numeric_cols.items())[:15]:
+                lines.append(f"  {c}: min={s['min']} median={s['median']} mean={s['mean']} "
+                             f"max={s['max']} std={s['std']} missing={s['missing']}")
+        if cat_cols:
+            lines.append("Categorical columns (top values by count):")
+            for c, s in list(cat_cols.items())[:10]:
+                tops = ", ".join(f"{v}={cnt}" for v, cnt in s["top"])
+                lines.append(f"  {c}: {s['unique']} unique, missing={s['missing']} — top: {tops}")
+        lines.append(f"Sample rows (first 20 of {n}):")
+        lines.append(json.dumps(sample, default=str)[:3000])
         return "\n".join(lines)
 
     async def _run_agent(self, agent_key: str, question: str, data_summary: str, industry: str) -> dict:
@@ -124,9 +161,10 @@ class AgentService:
         messages = [{
             "role": "user",
             "content": (
-                f"User question: {question}\n\n"
+                f"THE QUESTION TO SERVE: \"{question}\"\n\n"
                 f"Data summary:\n{data_summary}\n\n"
-                f"Give your specialist findings."
+                f"Give findings from your specialty that specifically help answer that "
+                f"exact question. Cite real values from the data above. Be specific, not general."
             ),
         }]
         try:
@@ -187,17 +225,21 @@ class AgentService:
             "role": "user",
             "content": (
                 f"{SYNTH_SYSTEM}\n\n"
-                f"User question: {question}\n\n"
+                f"════════════════════════════════════════\n"
+                f"THE EXACT QUESTION YOU MUST ANSWER:\n\"{question}\"\n"
+                f"════════════════════════════════════════\n\n"
                 f"Data summary:\n{data_summary}\n\n"
-                f"Specialist findings:\n{findings_block}{emphasis_note}\n\n"
-                f"Write the final authoritative answer now."
+                f"Specialist findings to draw from:\n{findings_block}{emphasis_note}\n\n"
+                f"Now write your answer. First sentence must directly answer "
+                f"\"{question}\" with a specific claim citing real values. Then the "
+                f"specific supporting evidence. No generic overview."
             ),
         }]
         try:
             from app.services.elite_llm_service import elite_llm_service, LLMProvider
             answer, s_tokens, s_provider = await elite_llm_service.chat(
                 messages=synth_msg, industry=industry, provider=LLMProvider.anthropic,
-                max_tokens=1400, temperature=0.15)
+                max_tokens=1400, temperature=0.05)
         except Exception as e:
             # Fall back to the strongest single specialist if synthesis fails
             logger.warning(f"Synthesis failed, falling back: {e}")
