@@ -87,6 +87,17 @@ SYNTH_SYSTEM = (
 )
 
 
+def _r(v):
+    """Round a numeric value for display, handling NaN/None."""
+    try:
+        import math
+        if v is None or (isinstance(v, float) and math.isnan(v)):
+            return "n/a"
+        return round(float(v), 2)
+    except Exception:
+        return v
+
+
 def classify_question(q: str) -> str:
     """Which specialist should the synthesis lean on? Cheap keyword heuristic."""
     ql = (q or "").lower()
@@ -102,57 +113,53 @@ def classify_question(q: str) -> str:
 class AgentService:
 
     def _data_summary(self, data: list, columns: list = None) -> str:
-        """Compact but detailed summary — enough for the agents to answer specifically."""
+        """Compact but detailed summary — enough for specific answers, fast on big data."""
         if not data:
             return "No data provided."
+        n = len(data)
+        # Use pandas for fast vectorised stats on large data (falls back to pure Python).
+        try:
+            import pandas as pd
+            df = pd.DataFrame(data)
+            cols = columns or list(df.columns)
+            lines = [f"Rows: {n}", f"Columns ({len(cols)}): {', '.join(map(str, cols))}"]
+            num_lines, cat_lines = [], []
+            for c in cols:
+                if c not in df.columns:
+                    continue
+                s = df[c]
+                missing = int(s.isna().sum())
+                numeric = pd.to_numeric(s, errors="coerce")
+                if numeric.notna().sum() >= 3 and numeric.notna().sum() >= 0.5 * s.notna().sum():
+                    num_lines.append(
+                        f"  {c}: min={_r(numeric.min())} median={_r(numeric.median())} "
+                        f"mean={_r(numeric.mean())} max={_r(numeric.max())} "
+                        f"std={_r(numeric.std())} missing={missing}")
+                else:
+                    nun = int(s.nunique(dropna=True))
+                    if 0 < nun <= max(40, n // 2):
+                        vc = s.value_counts().head(6)
+                        tops = ", ".join(f"{k}={int(v)}" for k, v in vc.items())
+                        cat_lines.append(f"  {c}: {nun} unique, missing={missing} — top: {tops}")
+            if num_lines:
+                lines.append("Numeric columns (min/median/mean/max/std, missing):")
+                lines.extend(num_lines[:15])
+            if cat_lines:
+                lines.append("Categorical columns (top values by count):")
+                lines.extend(cat_lines[:10])
+            lines.append(f"Sample rows (first 20 of {n}):")
+            lines.append(json.dumps(data[:20], default=str)[:3000])
+            return "\n".join(lines)
+        except Exception:
+            return self._data_summary_fallback(data, columns)
+
+    def _data_summary_fallback(self, data: list, columns: list = None) -> str:
+        """Pure-Python summary if pandas isn't available."""
         cols = columns or (list(data[0].keys()) if isinstance(data[0], dict) else [])
         n = len(data)
-        sample = data[:20]
-        numeric_cols, cat_cols = {}, {}
-        try:
-            import statistics
-            for c in cols:
-                vals, missing = [], 0
-                raw = []
-                for row in data:
-                    v = row.get(c) if isinstance(row, dict) else None
-                    if v is None or v == "":
-                        missing += 1
-                    raw.append(v)
-                    if isinstance(v, (int, float)) and not isinstance(v, bool):
-                        vals.append(v)
-                if len(vals) >= 3:
-                    svals = sorted(vals)
-                    numeric_cols[c] = {
-                        "min": min(vals), "max": max(vals),
-                        "mean": round(statistics.mean(vals), 2),
-                        "median": round(statistics.median(vals), 2),
-                        "std": round(statistics.pstdev(vals), 2) if len(vals) > 1 else 0,
-                        "count": len(vals), "missing": missing,
-                    }
-                else:
-                    # treat as categorical — top values
-                    from collections import Counter
-                    non_null = [str(v) for v in raw if v is not None and v != ""]
-                    if non_null and len(set(non_null)) <= max(30, n // 2):
-                        top = Counter(non_null).most_common(6)
-                        cat_cols[c] = {"unique": len(set(non_null)), "missing": missing,
-                                       "top": top}
-        except Exception:
-            pass
         lines = [f"Rows: {n}", f"Columns ({len(cols)}): {', '.join(map(str, cols))}"]
-        if numeric_cols:
-            lines.append("Numeric columns (min/median/mean/max/std, missing):")
-            for c, s in list(numeric_cols.items())[:15]:
-                lines.append(f"  {c}: min={s['min']} median={s['median']} mean={s['mean']} "
-                             f"max={s['max']} std={s['std']} missing={s['missing']}")
-        if cat_cols:
-            lines.append("Categorical columns (top values by count):")
-            for c, s in list(cat_cols.items())[:10]:
-                tops = ", ".join(f"{v}={cnt}" for v, cnt in s["top"])
-                lines.append(f"  {c}: {s['unique']} unique, missing={s['missing']} — top: {tops}")
         lines.append(f"Sample rows (first 20 of {n}):")
-        lines.append(json.dumps(sample, default=str)[:3000])
+        lines.append(json.dumps(data[:20], default=str)[:3000])
         return "\n".join(lines)
 
     async def _run_agent(self, agent_key: str, question: str, data_summary: str, industry: str) -> dict:
@@ -186,18 +193,72 @@ class AgentService:
             max_tokens=900, temperature=0.1)
         return text, tokens, provider
 
-    async def analyze(self, question: str, data: list, columns: list = None,
-                      industry: str = "general") -> dict:
+    async def analyze_fast(self, question: str, data: list, columns: list = None,
+                           industry: str = "general", data_summary: str = None) -> dict:
         """
-        Run the full panel: specialists in parallel, then synthesis.
-        Returns the elite answer plus each agent's view and metadata.
+        Fast mode: ONE well-prompted call that does the work of the panel — quality
+        checks, trends, and risks — folded into a single specific answer. ~1/4 the
+        time of the full panel. Used as the default; the panel is opt-in for depth.
         """
         if not question or not (question or "").strip():
             return {"success": False, "error": "Ask a question for this cell."}
-        if not data:
+        if not data and not data_summary:
+            return {"success": False, "error": "This cell has no data to analyse."}
+        if not data_summary:
+            data_summary = self._data_summary(data, columns)
+        emphasis = classify_question(question)
+
+        system = (
+            "You are an elite data analyst. Answer the user's EXACT question with "
+            "surgical specificity. RULES: (1) Answer only what's asked — name the "
+            "specific region/month/category/row, don't give a general overview. "
+            "(2) Cite real values from the data ('North fell 240k→197k, -18%'), never "
+            "vague direction words. (3) No generic filler — if a sentence would be true "
+            "of any dataset, cut it. (4) First sentence directly answers the question. "
+            "(5) Briefly note data-quality caveats or risks ONLY if they affect this "
+            "answer. Be precise, specific, grounded in the actual numbers below."
+        )
+        msg = [{
+            "role": "user",
+            "content": (
+                f"{system}\n\n"
+                f"════════════════════════════════════════\n"
+                f"THE EXACT QUESTION:\n\"{question}\"\n"
+                f"════════════════════════════════════════\n\n"
+                f"Data summary:\n{data_summary}\n\n"
+                f"Answer now — first sentence directly answers \"{question}\" with a "
+                f"specific claim citing real values. Then the specific evidence."
+            ),
+        }]
+        try:
+            from app.services.elite_llm_service import elite_llm_service, LLMProvider
+            answer, tokens, provider = await elite_llm_service.chat(
+                messages=msg, industry=industry, provider=LLMProvider.anthropic,
+                max_tokens=1200, temperature=0.05)
+            return {"success": True, "answer": answer, "emphasis": emphasis,
+                    "agents": [], "provider": provider, "tokens": tokens,
+                    "mode": "fast", "agents_ok": 1, "agents_total": 1}
+        except Exception as e:
+            logger.warning(f"Fast analysis failed: {e}")
+            return {"success": False,
+                    "error": "The AI providers are busy — try again in a moment.",
+                    "agents": []}
+
+    async def analyze(self, question: str, data: list, columns: list = None,
+                      industry: str = "general", data_summary: str = None) -> dict:
+        """
+        Run the full panel: specialists in parallel, then synthesis.
+        Returns the elite answer plus each agent's view and metadata.
+        If data_summary is provided (precomputed at notebook creation), it's reused
+        instead of recomputing stats over thousands of rows on every cell.
+        """
+        if not question or not (question or "").strip():
+            return {"success": False, "error": "Ask a question for this cell."}
+        if not data and not data_summary:
             return {"success": False, "error": "This cell has no data to analyse."}
 
-        data_summary = self._data_summary(data, columns)
+        if not data_summary:
+            data_summary = self._data_summary(data, columns)
         emphasis = classify_question(question)
 
         # 1. Run the three specialists in parallel
