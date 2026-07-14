@@ -50,10 +50,12 @@ class RenameReq(BaseModel):
 class CellReq(BaseModel):
     question: str
     workspace_id: Optional[str] = None
+    deep: Optional[bool] = False
 
 class RerunReq(BaseModel):
     question: Optional[str] = None
     workspace_id: Optional[str] = None
+    deep: Optional[bool] = False
 
 class ReorderReq(BaseModel):
     order: list
@@ -121,7 +123,7 @@ async def add_cell(nid: str, req: CellReq, authorization: Optional[str] = Header
     ok, err = await _access(user["_id"], req.workspace_id, need_write=True)
     if not ok:
         return {"success": False, "error": err}
-    return await _svc().add_cell(user["_id"], nid, req.question, workspace_id=req.workspace_id)
+    return await _svc().add_cell(user["_id"], nid, req.question, workspace_id=req.workspace_id, deep=req.deep)
 
 @router.post("/{nid}/cells/{cid}/rerun")
 async def rerun_cell(nid: str, cid: str, req: RerunReq, authorization: Optional[str] = Header(None)):
@@ -131,7 +133,7 @@ async def rerun_cell(nid: str, cid: str, req: RerunReq, authorization: Optional[
     ok, err = await _access(user["_id"], req.workspace_id, need_write=True)
     if not ok:
         return {"success": False, "error": err}
-    return await _svc().rerun_cell(user["_id"], nid, cid, req.question, workspace_id=req.workspace_id)
+    return await _svc().rerun_cell(user["_id"], nid, cid, req.question, workspace_id=req.workspace_id, deep=req.deep)
 
 @router.delete("/{nid}/cells/{cid}")
 async def delete_cell(nid: str, cid: str, workspace_id: Optional[str] = None, authorization: Optional[str] = Header(None)):
