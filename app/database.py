@@ -83,6 +83,8 @@ async def _ensure_indexes(db):
         await db.analyses.create_index("created_at")
         await db.schedules.create_index([("active", 1), ("next_run", 1)])
         await db.schedules.create_index([("user_id", 1), ("created_at", -1)])
+        await db.workspace_members.create_index([("user_id", 1)])
+        await db.workspace_members.create_index([("workspace_id", 1), ("user_id", 1)], unique=True)
     except Exception as e:
         logger.warning(f"Index creation skipped: {e}")
 
