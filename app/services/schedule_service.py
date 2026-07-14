@@ -251,7 +251,8 @@ class ScheduleService:
                 fail_parts.append("email needs a verified domain")
         if chan.get("sms"):
             if delivered["sms"] and delivered["sms"].get("success"):
-                ok_parts.append("texted")
+                n = delivered["sms"].get("recipients", 1)
+                ok_parts.append(f"texted {n}" if n > 1 else "texted")
             elif delivered["sms"]:
                 fail_parts.append("sms failed: " + str(delivered["sms"].get("error", ""))[:60])
 
