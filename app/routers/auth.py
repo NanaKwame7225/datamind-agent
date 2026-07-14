@@ -32,6 +32,24 @@ def _history():
     from app.services.history_service import history_service
     return history_service
 
+async def _ws_access(user_id: str, workspace_id: str, need_write: bool = False):
+    """
+    Returns (ok, error). Personal or no workspace → always ok (scoped to user).
+    Shared workspace → must be a member; write ops need owner/editor.
+    """
+    if not workspace_id:
+        return True, None
+    from app.services.workspace_service import workspace_service, is_personal
+    if is_personal(workspace_id):
+        # A personal id must be the caller's own
+        return (workspace_id == f"personal:{user_id}"), "Not your workspace."
+    role = await workspace_service.role_of(user_id, workspace_id)
+    if role is None:
+        return False, "You don't have access to that workspace."
+    if need_write and role not in ("owner", "editor"):
+        return False, "You have view-only access to this workspace."
+    return True, None
+
 
 async def current_user(authorization: Optional[str] = Header(None)) -> Optional[dict]:
     """Resolve the bearer token to a user, or None if absent/invalid."""
@@ -68,6 +86,9 @@ class SaveReq(BaseModel):
     columns: Optional[list] = None
     data_preview: Optional[list] = None
     source: Optional[str] = None
+    save_as: Optional[str] = "auto"          # auto | new | version
+    target_id: Optional[str] = None
+    workspace_id: Optional[str] = None
 
 class RenameReq(BaseModel):
     title: str
@@ -106,34 +127,90 @@ async def save_history(req: SaveReq, authorization: Optional[str] = Header(None)
     user = await current_user(authorization)
     if not user:
         raise HTTPException(status_code=401, detail="Sign in to save analyses.")
-    return await _history().save(user["_id"], req.dict())
+    payload = req.dict()
+    save_as = payload.pop("save_as", "auto") or "auto"
+    target_id = payload.pop("target_id", None)
+    workspace_id = payload.pop("workspace_id", None)
+    ok, err = await _ws_access(user["_id"], workspace_id, need_write=True)
+    if not ok:
+        return {"success": False, "error": err}
+    return await _history().save(user["_id"], payload, save_as=save_as, target_id=target_id, workspace_id=workspace_id)
 
 @router.get("/history")
-async def list_history(limit: int = 50, skip: int = 0,
+async def list_history(limit: int = 50, skip: int = 0, workspace_id: Optional[str] = None,
                        authorization: Optional[str] = Header(None)):
     user = await current_user(authorization)
     if not user:
         return {"success": True, "items": [], "total": 0}
-    return await _history().list(user["_id"], limit, skip)
+    ok, err = await _ws_access(user["_id"], workspace_id)
+    if not ok:
+        return {"success": False, "error": err, "items": []}
+    return await _history().list(user["_id"], limit, skip, workspace_id=workspace_id)
 
 @router.get("/history/{analysis_id}")
-async def get_history(analysis_id: str, authorization: Optional[str] = Header(None)):
+async def get_history(analysis_id: str, version_id: Optional[str] = None,
+                      workspace_id: Optional[str] = None,
+                      authorization: Optional[str] = Header(None)):
     user = await current_user(authorization)
     if not user:
         raise HTTPException(status_code=401, detail="Sign in to view saved analyses.")
-    return await _history().get(user["_id"], analysis_id)
+    ok, err = await _ws_access(user["_id"], workspace_id)
+    if not ok:
+        return {"success": False, "error": err}
+    return await _history().get(user["_id"], analysis_id, version_id, workspace_id=workspace_id)
+
+@router.get("/history/{analysis_id}/versions")
+async def list_versions(analysis_id: str, workspace_id: Optional[str] = None,
+                        authorization: Optional[str] = Header(None)):
+    user = await current_user(authorization)
+    if not user:
+        raise HTTPException(status_code=401, detail="Sign in to view version history.")
+    ok, err = await _ws_access(user["_id"], workspace_id)
+    if not ok:
+        return {"success": False, "error": err}
+    return await _history().versions(user["_id"], analysis_id, workspace_id=workspace_id)
+
+@router.post("/history/{analysis_id}/restore/{version_id}")
+async def restore_version(analysis_id: str, version_id: str, workspace_id: Optional[str] = None,
+                          authorization: Optional[str] = Header(None)):
+    user = await current_user(authorization)
+    if not user:
+        raise HTTPException(status_code=401, detail="Sign in to restore versions.")
+    ok, err = await _ws_access(user["_id"], workspace_id, need_write=True)
+    if not ok:
+        return {"success": False, "error": err}
+    return await _history().restore_version(user["_id"], analysis_id, version_id, workspace_id=workspace_id)
+
+@router.delete("/history/{analysis_id}/version/{version_id}")
+async def delete_version(analysis_id: str, version_id: str, workspace_id: Optional[str] = None,
+                         authorization: Optional[str] = Header(None)):
+    user = await current_user(authorization)
+    if not user:
+        raise HTTPException(status_code=401, detail="Sign in to edit versions.")
+    ok, err = await _ws_access(user["_id"], workspace_id, need_write=True)
+    if not ok:
+        return {"success": False, "error": err}
+    return await _history().delete_version(user["_id"], analysis_id, version_id, workspace_id=workspace_id)
 
 @router.patch("/history/{analysis_id}")
 async def rename_history(analysis_id: str, req: RenameReq,
+                         workspace_id: Optional[str] = None,
                          authorization: Optional[str] = Header(None)):
     user = await current_user(authorization)
     if not user:
         raise HTTPException(status_code=401, detail="Sign in to edit saved analyses.")
-    return await _history().rename(user["_id"], analysis_id, req.title)
+    ok, err = await _ws_access(user["_id"], workspace_id, need_write=True)
+    if not ok:
+        return {"success": False, "error": err}
+    return await _history().rename(user["_id"], analysis_id, req.title, workspace_id=workspace_id)
 
 @router.delete("/history/{analysis_id}")
-async def delete_history(analysis_id: str, authorization: Optional[str] = Header(None)):
+async def delete_history(analysis_id: str, workspace_id: Optional[str] = None,
+                         authorization: Optional[str] = Header(None)):
     user = await current_user(authorization)
     if not user:
         raise HTTPException(status_code=401, detail="Sign in to delete saved analyses.")
-    return await _history().delete(user["_id"], analysis_id)
+    ok, err = await _ws_access(user["_id"], workspace_id, need_write=True)
+    if not ok:
+        return {"success": False, "error": err}
+    return await _history().delete(user["_id"], analysis_id, workspace_id=workspace_id)
