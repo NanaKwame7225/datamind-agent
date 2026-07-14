@@ -130,6 +130,14 @@ try:
 except Exception as e:
     logger.error(f"Workspaces router failed: {e}", exc_info=True)
 
+# ── Notebooks router (multi-agent analysis notebooks) ─────────────────────────
+try:
+    from app.routers import notebook as notebook_router
+    app.include_router(notebook_router.router, prefix="/api/v1/notebooks", tags=["Notebooks"])
+    logger.info("Notebooks router loaded")
+except Exception as e:
+    logger.error(f"Notebooks router failed: {e}", exc_info=True)
+
 # ── Database warm-up (auth + history) ─────────────────────────────────────────
 @app.on_event("startup")
 async def _startup_db():
