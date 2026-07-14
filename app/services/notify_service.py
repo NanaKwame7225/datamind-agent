@@ -91,28 +91,47 @@ class NotifyService:
     def sms_configured(self) -> bool:
         return bool(self._mnotify_key())
 
-    def send_sms(self, to: str, message: str) -> dict:
+    def _parse_numbers(self, to):
+        """Accept a string ('num1, num2') or a list; return a clean list."""
+        if isinstance(to, list):
+            raw = to
+        else:
+            # split on comma, semicolon, whitespace, or newline
+            import re
+            raw = re.split(r"[,;\s]+", str(to or ""))
+        seen, out = set(), []
+        for n in raw:
+            n = (n or "").strip()
+            if n and n not in seen:
+                seen.add(n)
+                out.append(n)
+        return out
+
+    def send_sms(self, to, message: str) -> dict:
         key = self._mnotify_key()
         sender = _get("MNOTIFY_SENDER_ID") or "NkaySolutions"
         if not key:
             return {"success": False, "error": "SMS not configured (no MNOTIFY_API_KEY)."}
-        if not to:
+        recipients = self._parse_numbers(to)
+        if not recipients:
             return {"success": False, "error": "No recipient phone number."}
         try:
             import requests
         except ImportError:
             return {"success": False, "error": "requests not installed."}
         try:
-            # Mnotify quick-send endpoint
+            # Mnotify quick-send endpoint — recipient is an array, so one call
+            # delivers to every number.
             r = requests.post(
                 f"https://api.mnotify.com/api/sms/quick?key={key}",
-                json={"recipient": [to], "sender": sender,
+                json={"recipient": recipients, "sender": sender,
                       "message": message[:459]},   # ~3 SMS segments max
-                timeout=20)
+                timeout=25)
             if r.status_code < 300:
                 body = r.json() if r.headers.get("content-type","").startswith("application/json") else {}
                 ok = str(body.get("status", "")).lower() in ("success", "ok") or r.status_code == 200
-                return {"success": ok, "provider": "mnotify", "detail": body}
+                return {"success": ok, "provider": "mnotify",
+                        "recipients": len(recipients), "detail": body}
             return {"success": False, "error": f"Mnotify {r.status_code}: {r.text[:180]}"}
         except Exception as e:
             logger.error(f"SMS send failed: {e}")
