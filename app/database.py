@@ -85,6 +85,8 @@ async def _ensure_indexes(db):
         await db.schedules.create_index([("user_id", 1), ("created_at", -1)])
         await db.workspace_members.create_index([("user_id", 1)])
         await db.workspace_members.create_index([("workspace_id", 1), ("user_id", 1)], unique=True)
+        await db.datasets.create_index([("user_id", 1), ("created_at", -1)])
+        await db.datasets.create_index([("workspace_id", 1), ("created_at", -1)])
         await db.notebooks.create_index([("user_id", 1), ("updated_at", -1)])
         await db.notebooks.create_index([("workspace_id", 1), ("updated_at", -1)])
     except Exception as e:
