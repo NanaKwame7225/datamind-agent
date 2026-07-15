@@ -276,6 +276,55 @@ def _elite_metrics(elite) -> list[Metric]:
 
 # ── Main endpoint ─────────────────────────────────────────────────────────────
 
+def _data_facts(df, max_chars: int = 3500) -> str:
+    """
+    Real facts from the data so the model can cite specifics instead of
+    generalising: head rows, numeric stats, and top categories by the main metric.
+    """
+    import pandas as pd
+    parts = []
+    # 1. Actual rows — the model can quote these directly
+    head = df.head(12)
+    parts.append("ACTUAL DATA (first 12 rows):")
+    parts.append(head.to_string(index=False, max_colwidth=22)[:1400])
+
+    # 2. Numeric summaries
+    num = df.select_dtypes(include="number")
+    if not num.empty:
+        parts.append("\nNUMERIC SUMMARY:")
+        try:
+            stats = num.describe().T[["min", "50%", "mean", "max"]]
+            stats.columns = ["min", "median", "mean", "max"]
+            parts.append(stats.to_string(max_colwidth=18)[:900])
+        except Exception:
+            pass
+
+    # 3. Top categories ranked by the main metric — the "which is best/worst" material
+    num_cols = set(num.columns)
+    cats = [c for c in df.columns
+            if c not in num_cols
+            and not pd.api.types.is_datetime64_any_dtype(df[c])
+            and 0 < df[c].nunique(dropna=True) <= 60]
+    if cats and not num.empty:
+        # Ignore id-like / index-like columns when choosing what to rank by
+        skip = ("rank", "id", "index", "year", "no", "number", "code")
+        candidates = [c for c in num.columns
+                      if not any(s in str(c).lower() for s in skip)]
+        if not candidates:
+            candidates = list(num.columns)
+        metric = num[candidates].sum(numeric_only=True).idxmax()
+        for c in cats[:3]:
+            try:
+                top = (df.groupby(c)[metric].sum()
+                         .sort_values(ascending=False).head(8))
+                parts.append(f"\nTOP {c.upper()} BY TOTAL {metric.upper()}:")
+                parts.append(top.to_string()[:600])
+            except Exception:
+                continue
+    out = "\n".join(parts)
+    return out[:max_chars]
+
+
 @router.post("/analyse", response_model=AnalysisResponse)
 async def analyse(req: AnalysisRequest):
     t0 = time.perf_counter()
@@ -450,6 +499,12 @@ async def analyse(req: AnalysisRequest):
             context_parts.append(f"Dataset: {len(df)} rows × {len(df.columns)} columns")
             context_parts.append(f"Columns available: {list(df.columns)}")
 
+        # Give the model the ACTUAL data — otherwise it can only speak in generalities.
+        try:
+            context_parts.append("\n" + _data_facts(df))
+        except Exception as e:
+            logger.warning(f"Data facts failed: {e}")
+
     if rag_block:
         context_parts.append("\n" + rag_block)
         context_parts.append(
@@ -458,6 +513,23 @@ async def analyse(req: AnalysisRequest):
         )
     if memory_block:
         context_parts.append("\n" + memory_block)
+
+    context_parts.append(
+        "\n════════ HOW TO ANSWER ════════\n"
+        f"Answer THIS exact question: \"{req.query}\"\n"
+        "RULES:\n"
+        "1. SPECIFIC, NOT GENERAL. Name the actual rows, categories, and values from the "
+        "data above. 'Asteroids leads with 4.31M units (Atari, 1988)' — never 'some titles "
+        "performed well'.\n"
+        "2. LEAD WITH THE ANSWER. First sentence answers the question directly with a "
+        "concrete fact.\n"
+        "3. SHOW THE RECORDS. When the question implies a ranking, comparison, or 'which/top/"
+        "worst', present the actual rows as a markdown table with the real values. Include the "
+        "identifying columns and the metric that matters.\n"
+        "4. CITE REAL NUMBERS everywhere — totals, deltas, percentages computed from the data.\n"
+        "5. NO FILLER. Delete any sentence that would be true of any dataset.\n"
+        "Be precise and evidence-bound. This is an elite analyst's answer."
+    )
 
     context_msg = "\n".join(context_parts)
     messages = list(req.conversation_history) + [{"role": "user", "content": context_msg}]
