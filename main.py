@@ -130,6 +130,14 @@ try:
 except Exception as e:
     logger.error(f"Workspaces router failed: {e}", exc_info=True)
 
+# ── Datasets router (server-side storage for large data) ──────────────────────
+try:
+    from app.routers import dataset as dataset_router
+    app.include_router(dataset_router.router, prefix="/api/v1/datasets", tags=["Datasets"])
+    logger.info("Datasets router loaded")
+except Exception as e:
+    logger.error(f"Datasets router failed: {e}", exc_info=True)
+
 # ── Notebooks router (multi-agent analysis notebooks) ─────────────────────────
 try:
     from app.routers import notebook as notebook_router
