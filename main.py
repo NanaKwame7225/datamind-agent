@@ -138,6 +138,14 @@ try:
 except Exception as e:
     logger.error(f"Datasets router failed: {e}", exc_info=True)
 
+# ── ATS router (HR: CV scoring against weighted, job-relevant criteria) ───────
+try:
+    from app.routers import ats as ats_router
+    app.include_router(ats_router.router, prefix="/api/v1/ats", tags=["ATS"])
+    logger.info("ATS router loaded")
+except Exception as e:
+    logger.error(f"ATS router failed: {e}", exc_info=True)
+
 # ── Notebooks router (multi-agent analysis notebooks) ─────────────────────────
 try:
     from app.routers import notebook as notebook_router
