@@ -154,3 +154,30 @@ async def reorder(nid: str, req: ReorderReq, authorization: Optional[str] = Head
     if not ok:
         return {"success": False, "error": err}
     return await _svc().reorder_cells(user["_id"], nid, req.order, workspace_id=req.workspace_id)
+
+@router.get("/providers")
+async def providers():
+    """Which AI providers are actually configured? Diagnoses 'all agents failed'."""
+    import os
+    def has(*names):
+        for n in names:
+            try:
+                from config.settings import settings
+                if getattr(settings, n, None):
+                    return True
+            except Exception:
+                pass
+            if os.environ.get(n):
+                return True
+        return False
+    out = {
+        "anthropic": has("ANTHROPIC_API_KEY", "CLAUDE_API_KEY"),
+        "openai": has("OPENAI_API_KEY"),
+        "gemini": has("GOOGLE_API_KEY", "GEMINI_API_KEY"),
+        "groq": has("GROQ_API_KEY"),
+        "cohere": has("COHERE_API_KEY"),
+    }
+    out["any_available"] = any(out.values())
+    out["note"] = ("Notebook cells need at least one provider."
+                   if not out["any_available"] else "OK")
+    return out
