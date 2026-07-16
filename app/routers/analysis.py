@@ -276,20 +276,52 @@ def _elite_metrics(elite) -> list[Metric]:
 
 # ── Main endpoint ─────────────────────────────────────────────────────────────
 
-def _data_facts(df, max_chars: int = 3500) -> str:
+def _data_facts(df, max_chars: int = 4500, query: str = "") -> str:
     """
     Real facts from the data so the model can cite specifics instead of
-    generalising: head rows, numeric stats, and top categories by the main metric.
+    generalising. Critically this includes the TOP and BOTTOM rows by the main
+    metric — "which X is highest?" is unanswerable from a head() sample, since
+    the leader may sit anywhere in the file.
     """
     import pandas as pd
     parts = []
-    # 1. Actual rows — the model can quote these directly
-    head = df.head(12)
-    parts.append("ACTUAL DATA (first 12 rows):")
-    parts.append(head.to_string(index=False, max_colwidth=22)[:1400])
-
-    # 2. Numeric summaries
     num = df.select_dtypes(include="number")
+
+    # Pick the metric that matters: prefer aggregates, ignore ids/years.
+    metric = None
+    if not num.empty:
+        skip = ("rank", "id", "index", "year", "no", "number", "code")
+        cands = [c for c in num.columns if not any(s in str(c).lower() for s in skip)]
+        if not cands:
+            cands = list(num.columns)
+        # A column named in the question wins; else prefer global/total; else biggest sum
+        ql = (query or "").lower()
+        named = [c for c in cands if str(c).lower().replace("_", " ") in ql or str(c).lower() in ql]
+        whole = [c for c in cands if any(w in str(c).lower()
+                 for w in ("global", "total", "overall", "combined", "gross", "net"))]
+        metric = (named or whole or [num[cands].sum().idxmax()])[0]
+
+    # 1. THE LEADERS — the rows that actually answer "which is highest/lowest"
+    if metric is not None:
+        try:
+            label_cols = [c for c in df.columns if c not in num.columns][:3]
+            show = ([*label_cols, metric] if label_cols else [metric])
+            show = [c for c in dict.fromkeys(show) if c in df.columns]
+            top = df.nlargest(15, metric)[show]
+            parts.append(f"TOP 15 ROWS BY {str(metric).upper()} (the highest in the WHOLE dataset, "
+                         f"not a sample — use these to answer 'which is highest/top/best'):")
+            parts.append(top.to_string(index=False, max_colwidth=34)[:1600])
+            bot = df.nsmallest(5, metric)[show]
+            parts.append(f"\nBOTTOM 5 ROWS BY {str(metric).upper()}:")
+            parts.append(bot.to_string(index=False, max_colwidth=34)[:500])
+        except Exception as e:
+            logger.warning(f"Top/bottom rows failed: {e}")
+
+    # 2. A plain sample for context (file order)
+    parts.append(f"\nSAMPLE ROWS (first 8 of {len(df)}, file order — NOT ranked):")
+    parts.append(df.head(8).to_string(index=False, max_colwidth=22)[:800])
+
+    # 3. Numeric summaries
     if not num.empty:
         parts.append("\nNUMERIC SUMMARY:")
         try:
@@ -501,7 +533,7 @@ async def analyse(req: AnalysisRequest):
 
         # Give the model the ACTUAL data — otherwise it can only speak in generalities.
         try:
-            context_parts.append("\n" + _data_facts(df))
+            context_parts.append("\n" + _data_facts(df, query=req.query))
         except Exception as e:
             logger.warning(f"Data facts failed: {e}")
 
@@ -522,6 +554,10 @@ async def analyse(req: AnalysisRequest):
         "question asks to classify, group, rank, or compare, then DO that classification "
         "and present the result. A list of rows is NOT an answer unless a list was asked "
         "for. Work out the answer, then show the evidence.\n"
+        "2. THE 'TOP ROWS' BLOCK IS AUTHORITATIVE. It is computed from the ENTIRE dataset, "
+        "not a sample. If asked which is highest/top/best/leading, name the first row of "
+        "that block outright — never say the answer 'cannot be determined' or hedge about "
+        "not seeing the full data. You have the leaders.\n"
         "2. SPECIFIC, NOT GENERAL. Name the actual rows, categories, and values from the "
         "data above. 'Shooter dominates with 7.07M across 2 titles, led by Asteroids "
         "(4.31M)' — never 'some genres performed well'.\n"
