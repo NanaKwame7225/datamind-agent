@@ -239,9 +239,9 @@ class AgentService:
                     "agents": [], "provider": provider, "tokens": tokens,
                     "mode": "fast", "agents_ok": 1, "agents_total": 1}
         except Exception as e:
-            logger.warning(f"Fast analysis failed: {e}")
+            logger.error(f"Fast analysis failed: {e}", exc_info=True)
             return {"success": False,
-                    "error": "The AI providers are busy — try again in a moment.",
+                    "error": f"Analysis failed — {str(e)[:220]}",
                     "agents": []}
 
     async def analyze(self, question: str, data: list, columns: list = None,
@@ -270,8 +270,12 @@ class AgentService:
         succeeded = [r for r in results if r["ok"]]
 
         if not succeeded:
+            # Surface the REAL reason — a generic "busy" message hides config
+            # problems (missing keys, bad model names) that look identical.
+            errs = [f"{r['label']}: {r.get('error','?')}" for r in results]
+            logger.error("All agents failed: %s", " | ".join(errs))
             return {"success": False,
-                    "error": "All analysis agents were unavailable — the AI providers may be busy. Try again in a moment.",
+                    "error": "Analysis failed — " + (results[0].get("error") or "no provider responded")[:220],
                     "agents": results}
 
         # 2. Synthesise
