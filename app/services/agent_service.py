@@ -147,8 +147,27 @@ class AgentService:
             if cat_lines:
                 lines.append("Categorical columns (top values by count):")
                 lines.extend(cat_lines[:10])
-            lines.append(f"Sample rows (first 20 of {n}):")
-            lines.append(json.dumps(data[:20], default=str)[:3000])
+            # THE LEADERS — without these, "which is highest?" is unanswerable,
+            # because the top row may sit anywhere in the file.
+            try:
+                skip=("rank","id","index","year","no","number","code")
+                cands=[c for c in df.columns
+                       if pd.api.types.is_numeric_dtype(df[c])
+                       and not any(k in str(c).lower() for k in skip)]
+                if cands:
+                    whole=[c for c in cands if any(w in str(c).lower()
+                           for w in ("global","total","overall","combined","gross","net"))]
+                    m=(whole or [df[cands].sum().idxmax()])[0]
+                    labels=[c for c in df.columns if not pd.api.types.is_numeric_dtype(df[c])][:2]
+                    show=[c for c in dict.fromkeys([*labels,m]) if c in df.columns]
+                    top=df.nlargest(12,m)[show]
+                    lines.append(f"TOP 12 ROWS BY {str(m).upper()} (from the WHOLE dataset — "
+                                 f"authoritative for 'which is highest/top/best'):")
+                    lines.append(top.to_string(index=False,max_colwidth=32)[:1200])
+            except Exception:
+                pass
+            lines.append(f"Sample rows (first 20 of {n}, file order — NOT ranked):")
+            lines.append(json.dumps(data[:20], default=str)[:2200])
             return "\n".join(lines)
         except Exception:
             return self._data_summary_fallback(data, columns)
