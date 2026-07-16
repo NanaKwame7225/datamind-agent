@@ -1,8 +1,7 @@
 """
-DataMind Agent — Elite LLM Service v3
-Priority: Claude Sonnet 4 → GPT-4o → Gemini 2.0 Flash → Groq → Command R+
-Claude leads for accuracy. GPT-4o for depth. Gemini for speed. Groq as fast fallback.
-Every call injects pre-computed statistical evidence — AI cannot invent numbers.
+DataMind Agent — Elite LLM Service
+5-provider failover: Claude Sonnet 4 → GPT-4o → Gemini 2.0 Flash → Command R+ → Mistral Large
+Injects pre-computed statistical evidence into every prompt.
 """
 from __future__ import annotations
 import logging
@@ -14,184 +13,127 @@ logger = logging.getLogger(__name__)
 
 INDUSTRY_CONTEXTS = {
     "finance": """You are a CFO-level financial data analyst with 20 years experience.
-Focus on: revenue, profitability, cash flow, risk, ROI, EBITDA, NPV, liquidity ratios.
-Ground every claim in exact numbers. Flag anomalies, fraud signals, covenant risks.
-Reference causal flags, bias warnings and alternative explanations where provided.""",
+Your analysis must reference: ROI, EBITDA, NPV, cash conversion cycle, working capital ratios, liquidity, leverage.
+Always ground claims in specific numbers from the data. Flag FX exposure, fraud signals, covenant risks.""",
     "education": """You are a senior education data analyst and institutional researcher.
-Focus on: pass rates, dropout predictors, cohort retention, fee collection, assessment analytics.
-Ground every claim in exact numbers. Identify at-risk segments with evidence.""",
+Reference: pass rates, dropout predictors, cohort retention, fee collection efficiency, teacher-student ratios.
+Always ground claims in specific numbers. Identify at-risk student segments with evidence.""",
     "supply_chain": """You are a supply chain director with operations research expertise.
-Focus on: OTIF, DSI, reorder points, EOQ, supplier reliability, stockout risk.
-Ground every claim in exact numbers. Quantify stockout risks and carrying costs.""",
+Reference: OTIF, DSI, reorder points, EOQ, bullwhip effect, safety stock, supplier reliability scores.
+Always ground claims in specific numbers. Quantify stockout risks and carrying costs.""",
     "procurement": """You are a Chief Procurement Officer with category management expertise.
-Focus on: spend concentration, maverick spend, savings rate, PO cycle time, vendor performance.
-Ground every claim in exact numbers. Rank vendors by risk and value.""",
+Reference: spend concentration, maverick spend %, savings rate, PO cycle time, vendor performance scores.
+Always ground claims in specific numbers. Rank vendors by risk and value.""",
     "healthcare": """You are a healthcare analytics director with clinical operations expertise.
-Focus on: LOS, readmission %, ALOS, bed utilisation, cost per patient, diagnostic accuracy.
-Ground every claim in exact numbers. Prioritise patient safety signals.""",
+Reference: LOS, readmission %, ALOS, bed utilisation, case mix index, cost per DRG.
+Always ground claims in specific numbers. Prioritise patient safety signals.""",
     "mining": """You are a mining engineering analyst with operations expertise.
-Focus on: head grade, recovery rate, strip ratio, TRIFR, OEE, tonnes per man-shift.
-Ground every claim in exact numbers. Quantify cost per recovered unit.""",
+Reference: head grade, recovery rate, strip ratio, TRIFR, OEE, tonnes per man-shift.
+Always ground claims in specific numbers. Quantify cost per recovered unit of ore.""",
     "petroleum": """You are a petroleum engineering analyst with reservoir expertise.
-Focus on: BOE/day, GOR, water cut, decline curves, lifting cost, RRR, facility uptime.
-Ground every claim in exact numbers. Flag production decline signals.""",
+Reference: BOE/day, GOR, water cut, decline curve, lifting cost, RRR, facility uptime.
+Always ground claims in specific numbers. Flag production decline signals.""",
+    "marketing": """You are a CMO-level marketing analytics director.
+Reference: CAC, LTV, LTV:CAC ratio, ROAS, MER, CTR, CPC, CPM, conversion rate, attribution,
+funnel drop-off, channel mix, campaign incrementality, brand vs performance split, cohort retention.
+Always ground claims in specific numbers. Attribute performance to specific channels and campaigns,
+name the winners and losers, and quantify wasted spend. Distinguish correlation from incrementality.""",
+    "sales": """You are a VP of Sales with revenue operations expertise.
+Reference: pipeline coverage, win rate, average deal size, sales cycle length, quota attainment,
+stage conversion, lead-to-close, churn, net revenue retention, rep productivity, forecast accuracy.
+Always ground claims in specific numbers. Name the specific reps, regions, segments, or stages
+driving or dragging performance, and quantify the gap to target.""",
     "retail": """You are a retail analytics director with commercial expertise.
-Focus on: GMV, basket size, conversion rate, inventory turnover, shrinkage, churn rate, LTV.
-Ground every claim in exact numbers. Segment by customer cohort and product category.""",
+Reference: GMV, basket size, conversion rate, inventory turnover, shrinkage %, churn rate, LTV.
+Always ground claims in specific numbers. Segment by customer cohort and product category.""",
     "agriculture": """You are an agricultural economist and precision farming analyst.
-Focus on: yield per hectare, input-output ratio, price volatility, growing degree days.
-Ground every claim in exact numbers. Model profit sensitivity to weather and price.""",
+Reference: yield per hectare, input-output ratio, price volatility, growing degree days.
+Always ground claims in specific numbers. Model profit sensitivity to weather and price.""",
     "manufacturing": """You are a manufacturing excellence director with lean/six sigma expertise.
-Focus on: OEE, PPM defects, MTTR, MTBF, cycle time, first pass yield, capacity utilisation.
-Ground every claim in exact numbers. Rank defect types by frequency and cost.""",
+Reference: OEE, PPM defects, MTTR, MTBF, cycle time, first pass yield, capacity utilisation.
+Always ground claims in specific numbers. Rank defect types by frequency and cost.""",
     "ngo": """You are a MEAL director with UN/INGO expertise.
-Focus on: cost per beneficiary, outcome indicators, donor LTV, budget variance, programme effectiveness.
-Ground every claim in exact numbers. Assess impact with evidence.""",
+Reference: cost per beneficiary, outcome indicators, attribution gap, donor LTV, budget variance.
+Always ground claims in specific numbers. Assess programme effectiveness with evidence.""",
     "general": """You are a senior data scientist and business intelligence director.
 Adapt metrics and terminology to the specific industry and dataset.
-Ground every claim in exact numbers from the data provided.""",
+Always ground claims in specific numbers from the data provided.""",
 }
 
-ELITE_SYSTEM = """You are DataMind Agent — an elite AI business analyst at the level of a McKinsey partner combined with a PhD-level data scientist.
+ELITE_SYSTEM = """You are DataMind Agent — an elite AI business analyst operating at the level of a seasoned McKinsey partner combined with a PhD-level data scientist.
 
-═══════════════════════════════════════════════════════
-RULE 0 — VERIFY BEFORE YOU WRITE (MOST IMPORTANT RULE)
-═══════════════════════════════════════════════════════
-- Before writing any number, verify it matches the PRE-COMPUTED EVIDENCE block exactly
-- If your own calculation differs from the evidence block, USE THE EVIDENCE BLOCK NUMBER
-- NEVER invent, estimate, or independently calculate any number
-- Every statistic you write must appear verbatim in the evidence block
-- If a number is not in the evidence block, say "not available in dataset" — do not guess
+CORE RULES — YOU MUST FOLLOW EVERY ONE:
 
-═══════════════════════════════════════════════════════
-RULE 1 — GROUND EVERY CLAIM IN DATA
-═══════════════════════════════════════════════════════
-- Never say "likely", "probably", "may" without citing specific evidence
-- Quote exact numbers: "12.4% of values", "3 out of 47 records", "Z-score of 2.8σ"
-- Cite the method: "Z-score analysis", "OLS regression (p=0.003)", "Pearson r=0.87"
-- If the data does not support a claim, do not make the claim
+1. EVERY CLAIM MUST BE GROUNDED IN DATA
+   - Never say "likely", "probably", "may" without citing the specific evidence
+   - Always quote exact numbers: "12.4% of values", "3 out of 47 records", "deviation of 2.8σ"
+   - Cite the statistical method used: "Z-score analysis", "OLS regression (p=0.003)", "Pearson r=0.87"
 
-═══════════════════════════════════════════════════════
-RULE 2 — CONFIDENCE SCORES ON EVERY FINDING
-═══════════════════════════════════════════════════════
-- State confidence for each finding: High (>80%), Medium (60–80%), Low (<60%)
-- Explain what drives the confidence
-- Reduce confidence for small samples, high missing data, or non-significant p-values
+2. ALWAYS INCLUDE CONFIDENCE SCORES
+   - State your confidence for each major finding: High (>80%), Medium (60-80%), Low (<60%)
+   - Explain what drives the confidence level
+   - Flag where small sample size reduces reliability
 
-═══════════════════════════════════════════════════════
-RULE 3 — IMPACT RANKING IS MANDATORY
-═══════════════════════════════════════════════════════
-- Rank every finding by business impact (1 = highest)
-- Explain exactly why each issue affects KPIs
-- Quantify: "This anomaly inflates the mean by 18%"
+3. IMPACT RANKING IS MANDATORY
+   - Rank every finding by business impact (1 = highest impact)
+   - Explain WHY each issue matters to KPIs specifically
+   - Quantify the impact where possible: "This anomaly inflates the mean by 18%"
 
-═══════════════════════════════════════════════════════
-RULE 4 — CAUSAL REASONING
-═══════════════════════════════════════════════════════
-- Reference all confounders, Granger causality signals, and discontinuity signals
-- Distinguish correlation from causation explicitly
-- Never claim causation from observational data alone
+4. SEGMENT EVERY FINDING
+   - Break down findings by available categories (region, department, product, etc.)
+   - Identify which segment is driving the issue
+   - Compare best vs worst performing segments with exact numbers
 
-═══════════════════════════════════════════════════════
-RULE 5 — BIAS AUDIT
-═══════════════════════════════════════════════════════
-- Reference survivorship bias, selection bias, and missingness mechanism warnings
-- State whether imputation is valid
-- Flag impossible values
+5. UNCERTAINTY AND SELF-AUDIT
+   - State explicitly what assumptions you are making
+   - Identify what you could be wrong about
+   - Flag what additional data would improve the analysis
 
-═══════════════════════════════════════════════════════
-RULE 6 — SEGMENTATION
-═══════════════════════════════════════════════════════
-- Break every finding down by available categorical variables
-- Include Cohen's d effect sizes
-- Identify which segment is driving each issue
+RESPONSE STRUCTURE — USE EXACTLY THIS FORMAT:
 
-═══════════════════════════════════════════════════════
-RULE 7 — ALTERNATIVE EXPLANATIONS
-═══════════════════════════════════════════════════════
-- For every major finding, provide 2–3 competing explanations
-- State which is most supported by the data and why
+## Executive Summary
+One paragraph. The single most important thing the decision-maker needs to know. One actionable sentence at the end.
 
-═══════════════════════════════════════════════════════
-RULE 8 — SELF-AUDIT
-═══════════════════════════════════════════════════════
-- State what assumptions you are making
-- State what you could be wrong about
-- Reference power analysis — is the sample adequate?
-
-═══════════════════════════════════════════════════════
-RESPONSE FORMAT — USE EXACTLY THIS STRUCTURE
-═══════════════════════════════════════════════════════
-
-## EXECUTIVE SUMMARY
-One paragraph. The single most important insight. End with one actionable sentence.
-
----
-
-## DATA QUALITY & BIAS AUDIT
-Exact counts: rows, columns, missing values, duplicates, outliers capped.
-Any bias warnings from the audit.
-
----
-
-## KEY FINDINGS (ranked by impact)
+## Key Findings (ranked by impact)
 
 ### Finding 1 — [Title] | Impact: HIGH | Confidence: [X]%
-**Evidence:** [Exact numbers from evidence block — z-scores, p-values, effect sizes]
-**Business Impact:** [Specific KPI effect, quantified]
-**Affected Segments:** [Which segments, with Cohen's d]
-**Causal Note:** [Causal or correlational? Confounders?]
-**Alternative Explanations:** [2–3 competing theories]
+**Evidence:** [Exact numbers, sample rows, distributions]
+**Business Impact:** [Specific KPI effect, quantified where possible]
+**Affected Segments:** [Which categories/groups are most affected]
 **Recommended Action:** [Specific, measurable action]
 
 ### Finding 2 — [Title] | Impact: MEDIUM | Confidence: [X]%
 [Same structure]
 
----
+## What the Data Shows
+A structured narrative explaining the overall patterns with specific numbers throughout.
 
-## CAUSAL ANALYSIS
-Address all confounder flags, Granger signals, discontinuity signals.
-State what can and cannot be inferred causally.
+## Segment Analysis
+Break down the top metric by every available categorical variable. Quote exact numbers for each segment.
 
----
+## Correlations & Relationships
+Which metrics move together? What is the r-value? Is it statistically significant?
 
-## SEGMENT ANALYSIS
-Break down every key metric by all available categories.
-Exact numbers, p-values, effect sizes per segment.
+## Recommendations (numbered, prioritised)
+1. [Most impactful] — [Why] — [How to measure success]
+2. [Second most impactful] — [Why] — [How to measure success]
 
----
+## Uncertainty & Caveats
+- What assumptions were made
+- What this analysis cannot tell you
+- What additional data would improve confidence
 
-## CORRELATIONS
-r-value, Bonferroni-corrected p-value, sample size for each pair.
-Distinguish spurious from meaningful.
-
----
-
-## TIME SERIES INSIGHTS
-Structural breaks, seasonality, autocorrelation, regime changes.
-
----
-
-## RECOMMENDATIONS (numbered, prioritised)
-1. [Action] — [Why] — [How to measure] — [Confidence: X%]
-2. [Action] — [Why] — [How to measure] — [Confidence: X%]
-
----
-
-## UNCERTAINTY & CAVEATS
-Sample size adequacy, multiple comparison corrections, limitations.
-
----
-
-## SELF-AUDIT
-What I could be wrong about. What I tested and rejected. Domain context needed."""
+## Self-Audit
+- What I could be wrong about
+- Alternative explanations for the patterns found
+- Limitations of the methods used"""
 
 
 class EliteLLMService:
     """
-    Elite LLM service — Claude leads, GPT-4o backs up, Gemini for speed,
-    Groq as fast fallback, Command R+ as last resort.
-    Statistical evidence injected into every prompt to prevent hallucination.
+    Elite LLM service with automatic failover across 5 providers.
+    Injects pre-computed statistical evidence into every prompt.
+    Priority: Claude Sonnet 4 → GPT-4o → Gemini 2.0 Flash → Command R+ → Mistral Large
     """
 
     async def chat(
@@ -200,12 +142,17 @@ class EliteLLMService:
         industry: str = "general",
         provider: LLMProvider = LLMProvider.anthropic,
         model: Optional[str] = None,
-        max_tokens: int = 3000,
-        temperature: float = 0.05,
+        max_tokens: int = 2500,
+        temperature: float = 0.1,
         elite_context: Optional[dict] = None,
     ) -> tuple[str, int, str]:
+        """
+        Returns (response_text, tokens_used, provider_used).
+        elite_context: pre-computed analysis dict injected into the prompt.
+        """
         system = ELITE_SYSTEM + "\n\n" + INDUSTRY_CONTEXTS.get(industry, INDUSTRY_CONTEXTS["general"])
 
+        # Inject elite pre-computed statistical evidence
         if elite_context:
             messages = self._inject_elite_context(messages, elite_context)
 
@@ -223,245 +170,160 @@ class EliteLLMService:
                 continue
         raise Exception(f"All providers failed. Last error: {last_error}")
 
-    def _build_chain(self, preferred_provider, preferred_model):
-        """
-        Fixed priority chain — Claude leads for accuracy.
-        Preference parameter only affects which model Claude/GPT uses,
-        not the order of providers.
-        """
-        anthropic_key = getattr(settings, 'ANTHROPIC_API_KEY', None)
-        openai_key    = getattr(settings, 'OPENAI_API_KEY', None)
-        google_key    = getattr(settings, 'GOOGLE_API_KEY', None)
-        groq_key      = getattr(settings, 'GROQ_API_KEY', None)
-        cohere_key    = getattr(settings, 'COHERE_API_KEY', None)
-
-        chain = []
-
-        # 1. Claude Sonnet 4 — best accuracy, careful reasoning
-        if anthropic_key:
-            chain.append((self._anthropic, "Claude Sonnet 4", "claude-sonnet-4-20250514"))
-
-        # 2. GPT-4o — strong structured analysis
-        if openai_key:
-            chain.append((self._openai, "GPT-4o", "gpt-4o"))
-
-        # 3. Gemini 2.0 Flash — fast, good for large contexts
-        if google_key:
-            chain.append((self._gemini, "Gemini 2.0 Flash", "gemini-2.0-flash"))
-
-        # 4. Groq llama-3.3-70b — very fast fallback
-        if groq_key:
-            chain.append((self._groq, "Groq llama-3.3-70b", "llama-3.3-70b-versatile"))
-
-        # 5. Command R+ — last resort
-        if cohere_key:
-            chain.append((self._cohere, "Command R+", "command-r-plus"))
-
-        if not chain:
-            chain.append((self._no_keys_error, "no-provider", "none"))
-
-        return chain
-
     def _inject_elite_context(self, messages: list[dict], ctx: dict) -> list[dict]:
-        """
-        Inject pre-computed statistical evidence into the user message.
-        This forces the AI to reference real numbers instead of hallucinating.
-        """
+        """Prepend pre-computed statistical evidence to the user message."""
         lines = [
-            "══════════════════════════════════════════════════",
-            "PRE-COMPUTED STATISTICAL EVIDENCE",
-            "YOU MUST USE ONLY THESE NUMBERS IN YOUR RESPONSE.",
-            "DO NOT CALCULATE OR ESTIMATE ANY NUMBER INDEPENDENTLY.",
-            "══════════════════════════════════════════════════",
+            f"DATASET: {ctx.get('row_count', '?')} rows × {ctx.get('col_count', '?')} columns",
+            f"COLUMNS: {', '.join(ctx.get('columns', [])[:12])}",
             "",
-            f"DATASET: {ctx.get('row_count','?')} rows × {ctx.get('col_count','?')} columns",
-            f"COLUMNS AVAILABLE: {', '.join(ctx.get('columns',[])[:12])}",
-            "",
+            "PRE-COMPUTED STATISTICAL EVIDENCE — USE THESE EXACT NUMBERS IN YOUR RESPONSE:",
         ]
 
         # Distributions
         if ctx.get("distributions"):
-            lines.append("DISTRIBUTIONS (use these exact values):")
+            lines.append("\nDISTRIBUTIONS:")
             for col, d in list(ctx["distributions"].items())[:6]:
                 lines.append(
                     f"  {col}: n={d['count']}, mean={d['mean']}, median={d['median']}, "
                     f"std={d['std']}, min={d['min']}, max={d['max']}, "
-                    f"p25={d['p25']}, p75={d['p75']}, p95={d['p95']}, "
-                    f"missing={d['missing_pct']}%, cv={d.get('cv_pct','?')}%, "
-                    f"shape={d['distribution_shape']}, normal={d.get('is_normal','?')}"
+                    f"missing={d['missing_pct']}%, shape={d['distribution_shape']}, cv={d.get('cv_pct','?')}%"
                 )
 
         # Anomalies
-        anomaly_findings = [f for f in ctx.get("findings",[]) if f["type"]=="anomaly"]
-        if anomaly_findings:
-            lines.append("\nANOMALIES DETECTED:")
-            for f in anomaly_findings[:5]:
+        anomalies = [f for f in ctx.get("findings", []) if f["type"] == "anomaly"]
+        if anomalies:
+            lines.append("\nANOMALIES DETECTED (Z-score > 3σ):")
+            for f in anomalies[:5]:
                 ev = f["evidence"]
                 lines.append(
-                    f"  {f['column']}: {ev['anomaly_count']} anomalous records "
-                    f"({ev['anomaly_pct']}% of {ev.get('total_records', ctx.get('row_count','?'))} records), "
-                    f"normal range=[{ev['normal_range'][0]}, {ev['normal_range'][1]}], "
-                    f"values found={ev['anomaly_values'][:3]}, "
-                    f"impact on mean=+{ev['impact_on_mean_pct']}%, "
-                    f"max Z-score={ev['z_score_max']}σ, "
-                    f"confidence={round(f['confidence']*100)}%, "
-                    f"impact={f['impact_score']}/10"
+                    f"  {f['column']}: {ev['anomaly_count']} anomalies ({ev['anomaly_pct']}% of records), "
+                    f"normal range [{ev['normal_range'][0]}, {ev['normal_range'][1]}], "
+                    f"anomalous values: {ev['anomaly_values'][:3]}, "
+                    f"impact on mean: +{ev['impact_on_mean_pct']}%, "
+                    f"max Z-score: {ev['z_score_max']}σ, "
+                    f"confidence: {round(f['confidence']*100)}%"
                 )
-                if ev.get("context_rows"):
-                    lines.append(f"    Anomalous row samples: {ev['context_rows'][:2]}")
 
         # Trends
-        trend_findings = [f for f in ctx.get("findings",[]) if f["type"]=="trend"]
-        if trend_findings:
-            lines.append("\nTREND ANALYSIS (OLS regression):")
-            for f in trend_findings[:4]:
+        trends = [f for f in ctx.get("findings", []) if f["type"] == "trend"]
+        if trends:
+            lines.append("\nTRENDS (OLS linear regression):")
+            for f in trends[:4]:
                 ev = f["evidence"]
-                sig = "SIGNIFICANT" if ev.get('statistically_significant') else "NOT significant"
-                brk = f", STRUCTURAL BREAK at period {ev.get('structural_break_at_period')}" if ev.get('structural_break_detected') else ""
+                sig = f"p={ev.get('p_value','?')} ({'significant' if ev.get('statistically_significant') else 'not significant'})"
                 lines.append(
-                    f"  {f['column']}: total change={ev['total_change_pct']}% over {ev['period_count']} periods, "
-                    f"slope={ev['slope_per_period']}/period, R²={ev['r_squared']}, "
-                    f"p={ev.get('p_value','?')} ({sig}), "
-                    f"first={ev['first_value']}, last={ev['last_value']}{brk}, "
-                    f"confidence={round(f['confidence']*100)}%"
+                    f"  {f['column']}: {ev['total_change_pct']}% change over {ev['period_count']} periods, "
+                    f"R²={ev['r_squared']}, {sig}, "
+                    f"first={ev['first_value']}, last={ev['last_value']}, "
+                    f"slope={ev['slope_per_period']} per period"
                 )
 
         # Correlations
         if ctx.get("correlations"):
-            lines.append("\nCORRELATIONS (Pearson + Bonferroni correction):")
+            lines.append("\nCORRELATIONS (Pearson):")
             for c in ctx["correlations"][:5]:
-                sig = "SIGNIFICANT after Bonferroni" if c.get("significant_after_correction") else "not significant after Bonferroni"
                 lines.append(
-                    f"  {c['col1']} vs {c['col2']}: r={c['correlation']} ({c['strength']} {c['direction']}), "
-                    f"p_raw={c['p_value_raw']}, p_corrected={c.get('p_value_bonferroni_corrected','?')} ({sig}), "
-                    f"n={c['n_observations']} | {c['interpretation']}"
+                    f"  {c['col1']} vs {c['col2']}: r={c['correlation']} "
+                    f"({c['strength']} {c['direction']}), "
+                    f"p={c['p_value']} ({'significant' if c['significant'] else 'not significant'}), "
+                    f"n={c['n_observations']}. {c['interpretation']}"
                 )
 
         # Segmentation
         if ctx.get("segmentation"):
-            lines.append("\nSEGMENTATION (t-test + Cohen's d):")
+            lines.append("\nSEGMENTATION ANALYSIS:")
             for seg_col, seg_data in list(ctx["segmentation"].items())[:3]:
                 lines.append(f"  By {seg_col} ({seg_data['unique_segments']} segments):")
                 for metric, segments in list(seg_data["metrics"].items())[:2]:
                     lines.append(f"    {metric}:")
-                    for s in segments[:6]:
-                        sig = " [DIFF]" if s["statistically_different"] else ""
+                    for s in segments[:5]:
+                        diff = s["deviation_from_overall_pct"]
+                        sig = "(statistically different p<0.05)" if s["statistically_different"] else ""
                         lines.append(
-                            f"      Rank {s['rank']} {s['segment']}: mean={s['mean']}, "
-                            f"n={s['count']} ({s['pct_of_total']}%), "
-                            f"deviation={s['deviation_from_overall_pct']:+.1f}%{sig}, "
-                            f"p={s['p_value']}, Cohen's d={s.get('cohens_d','?')} ({s.get('effect_size','?')} effect)"
+                            f"      #{s['rank']} {s['segment']}: mean={s['mean']}, "
+                            f"n={s['count']} ({s['pct_of_total']}% of data), "
+                            f"deviation from avg: {diff:+.1f}% {sig}"
                         )
-
-        # Causal analysis
-        causal = ctx.get("causal_analysis", {})
-        if causal:
-            lines.append("\nCAUSAL ANALYSIS FLAGS:")
-            for c in causal.get("potential_confounders", [])[:3]:
-                lines.append(f"  CONFOUNDER: {c['warning']} (p={c['p_value']})")
-            for g in causal.get("granger_causality_signals", [])[:3]:
-                lines.append(f"  GRANGER SIGNAL: {g['note']} (lag r={g['lag_correlation']}, p={g['p_value']})")
-            for r in causal.get("regression_discontinuity_signals", [])[:2]:
-                lines.append(f"  DISCONTINUITY: {r['note']}")
-
-        # Bias audit
-        bias = ctx.get("bias_audit", {})
-        if bias:
-            lines.append("\nBIAS AUDIT:")
-            for col, m in list(bias.get("missingness_mechanism", {}).items())[:3]:
-                lines.append(f"  {col} missingness: {m['likely_mechanism']} — {m['recommendation']}")
-            for iv in bias.get("impossible_values", [])[:2]:
-                lines.append(f"  IMPOSSIBLE VALUE: {iv['issue']} — {iv['suggestion']}")
-            surv = bias.get("survivorship_bias_warning", {})
-            if surv:
-                lines.append(f"  SURVIVORSHIP BIAS WARNING: {surv['note']}")
-
-        # Advanced statistics
-        advanced = ctx.get("advanced_statistics", {})
-        if advanced:
-            lines.append("\nADVANCED STATISTICS:")
-            for p in advanced.get("power_analysis", [])[:2]:
-                lines.append(
-                    f"  Power ({p['column']}): n={p['n']}, "
-                    f"min detectable effect={p['min_detectable_effect']} "
-                    f"({p['min_detectable_effect_pct_of_mean']}% of mean), "
-                    f"adequate power={'YES' if p['adequate_power'] else 'NO — underpowered'}"
-                )
-            mc = advanced.get("multiple_comparison_correction", {})
-            if mc:
-                lines.append(f"  Multiple comparisons: {mc['n_tests_run']} tests, Bonferroni α={mc['alpha_adjusted']}, note={mc['note']}")
-            for k, v in list(advanced.get("effect_sizes", {}).items())[:2]:
-                lines.append(f"  Effect size ({k}): Cohen's d={v['cohens_d']} ({v['magnitude']}) — {v['interpretation']}")
-
-        # Time series
-        ts = ctx.get("time_series_intelligence", {})
-        if ts:
-            lines.append("\nTIME SERIES INTELLIGENCE:")
-            for col, t in list(ts.items())[:2]:
-                sb = t.get("structural_break", {})
-                lines.append(
-                    f"  {col}: {sb.get('interpretation','?')}, "
-                    f"autocorr_lag1={t.get('autocorrelation_lag1','?')}, "
-                    f"seasonality={'YES' if t.get('seasonality_signal') else 'NO'}, "
-                    f"trend_stability={t.get('trend_stability','?')}"
-                )
-
-        # Alternative explanations
-        alt = ctx.get("alternative_explanations", {})
-        if alt:
-            lines.append("\nALTERNATIVE EXPLANATIONS (address these in your response):")
-            for col, alts in list(alt.items())[:3]:
-                lines.append(f"  {col}:")
-                for a in alts[:3]:
-                    lines.append(f"    - {a}")
 
         # Impact ranking
         if ctx.get("impact_ranking"):
-            lines.append("\nIMPACT RANKING (pre-computed):")
+            lines.append("\nIMPACT RANKING (pre-computed, use this order):")
             for i, imp in enumerate(ctx["impact_ranking"][:5], 1):
                 lines.append(
-                    f"  #{i} {imp['column']}: score={imp['score']}/10, "
+                    f"  #{i} {imp['column']}: impact_score={imp['score']}/10, "
                     f"confidence={round(imp['confidence']*100)}%, "
-                    f"issue={imp['primary_issue']}"
+                    f"issue={imp['primary_issue']}, reason={imp['reason']}"
                 )
 
-        # Uncertainty
+        # Uncertainty flags
         if ctx.get("uncertainty"):
-            lines.append("\nUNCERTAINTY FLAGS:")
-            for u in ctx["uncertainty"][:5]:
-                lines.append(f"  - {u['issue']}: {u['detail'][:160]} (adj={u.get('confidence_adjustment',0)})")
+            lines.append("\nUNCERTAINTY FLAGS (include in self-audit):")
+            for u in ctx["uncertainty"][:3]:
+                lines.append(
+                    f"  - {u['issue']}: {u['detail'][:150]} "
+                    f"(confidence adjustment: {u['confidence_adjustment']})"
+                )
 
-        # Data grounding
+        # Self-audit
+        if ctx.get("self_audit"):
+            for audit in ctx["self_audit"][:1]:
+                lines.append(f"\nPRE-COMPUTED ASSUMPTIONS:")
+                for a in audit.get("assumptions", [])[:4]:
+                    lines.append(f"  - {a}")
+
+        # Data grounding summary
         dg = ctx.get("data_grounding", {})
-        if dg:
-            lines.append(
-                f"\nSUMMARY: {dg.get('total_data_points','?')} data points, "
-                f"{dg.get('total_anomalies_found','?')} anomalies, "
-                f"{dg.get('total_correlations_found','?')} correlations, "
-                f"{dg.get('segments_analysed','?')} segments, "
-                f"{dg.get('causal_flags_raised','?')} causal flags, "
-                f"{dg.get('bias_flags_raised','?')} bias flags, "
-                f"{dg.get('methods_applied','?')} methods applied, "
-                f"top confidence={round(dg.get('highest_confidence_finding',0)*100)}%"
-            )
-
-        lines.append("\n══════════════════════════════════════════════════")
-        lines.append("END OF EVIDENCE BLOCK — NOW WRITE YOUR ANALYSIS")
-        lines.append("══════════════════════════════════════════════════\n")
+        lines.append(f"\nDATA GROUNDING SUMMARY:")
+        lines.append(
+            f"  Total data points analysed: {dg.get('total_data_points', '?')} | "
+            f"Anomalies found: {dg.get('total_anomalies_found', 0)} | "
+            f"Correlations: {dg.get('total_correlations_found', 0)} | "
+            f"Segments: {dg.get('segments_analysed', 0)} | "
+            f"Confidence range: {round(dg.get('lowest_confidence_finding',0)*100)}% – "
+            f"{round(dg.get('highest_confidence_finding',0)*100)}%"
+        )
 
         evidence_block = "\n".join(lines)
+
+        # Prepend evidence to the last user message
         augmented = []
-        for msg in messages:
-            if msg["role"] == "user":
-                augmented.append({"role": "user", "content": evidence_block + "\n" + msg["content"]})
+        for i, msg in enumerate(messages):
+            if msg["role"] == "user" and i == len(messages) - 1:
+                augmented.append({
+                    "role": "user",
+                    "content": evidence_block + "\n\n" + msg["content"],
+                })
             else:
                 augmented.append(msg)
         return augmented
 
-    # ── PROVIDER IMPLEMENTATIONS ──────────────────────────────────────────────
+    def _build_chain(self, preferred_provider, preferred_model):
+        all_providers = [
+            (LLMProvider.anthropic, self._anthropic, "Claude Sonnet 4",  "claude-sonnet-4-20250514", settings.ANTHROPIC_API_KEY),
+            (LLMProvider.openai,    self._openai,    "GPT-4o",           "gpt-4o",                   settings.OPENAI_API_KEY),
+            (LLMProvider.gemini,    self._gemini,    "Gemini 2.0 Flash", "gemini-2.0-flash",         settings.GOOGLE_API_KEY),
+            (LLMProvider.cohere,    self._cohere,    "Command R+",       "command-r-plus",            settings.COHERE_API_KEY),
+            (LLMProvider.mistral,   self._mistral,   "Mistral Large",    "mistral-large-latest",      settings.MISTRAL_API_KEY),
+        ]
+        preferred = [
+            (fn, name, preferred_model or mdl)
+            for p, fn, name, mdl, key in all_providers
+            if p == preferred_provider and key
+        ]
+        fallbacks = [
+            (fn, name, mdl)
+            for p, fn, name, mdl, key in all_providers
+            if p != preferred_provider and key
+        ]
+        chain = preferred + fallbacks
+        if not chain:
+            return [(self._no_keys_error, "no-provider", "none")]
+        return chain
 
     async def _no_keys_error(self, *args, **kwargs):
-        raise Exception("No API keys configured. Add ANTHROPIC_API_KEY in Railway Variables.")
+        raise Exception(
+            "No API keys configured. Add ANTHROPIC_API_KEY or OPENAI_API_KEY in Railway Variables."
+        )
 
     async def _anthropic(self, messages, system, model, max_tokens, temperature):
         import anthropic
@@ -477,7 +339,7 @@ class EliteLLMService:
         client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
         r = await client.chat.completions.create(
             model=model,
-            messages=[{"role":"system","content":system}] + messages,
+            messages=[{"role": "system", "content": system}] + messages,
             max_tokens=max_tokens, temperature=temperature,
         )
         return r.choices[0].message.content, r.usage.total_tokens
@@ -489,34 +351,34 @@ class EliteLLMService:
             model_name=model, system_instruction=system,
             generation_config={"max_output_tokens": max_tokens, "temperature": temperature},
         )
-        msgs = [{"role":"user" if x["role"]=="user" else "model","parts":[x["content"]]} for x in messages]
+        msgs = [
+            {"role": "user" if x["role"] == "user" else "model", "parts": [x["content"]]}
+            for x in messages
+        ]
         chat = m.start_chat(history=msgs[:-1])
         r = await chat.send_message_async(msgs[-1]["parts"][0])
-        tokens = r.usage_metadata.total_token_count if hasattr(r,"usage_metadata") else 0
+        tokens = r.usage_metadata.total_token_count if hasattr(r, "usage_metadata") else 0
         return r.text, tokens
-
-    async def _groq(self, messages, system, model, max_tokens, temperature):
-        """Groq — fast fallback using OpenAI-compatible API"""
-        from openai import AsyncOpenAI
-        groq_key = getattr(settings, 'GROQ_API_KEY', None)
-        client = AsyncOpenAI(api_key=groq_key, base_url="https://api.groq.com/openai/v1")
-        r = await client.chat.completions.create(
-            model=model,
-            messages=[{"role":"system","content":system}] + messages,
-            max_tokens=min(max_tokens, 8000),
-            temperature=temperature,
-        )
-        return r.choices[0].message.content, r.usage.total_tokens
 
     async def _cohere(self, messages, system, model, max_tokens, temperature):
         import cohere
         client = cohere.AsyncClientV2(api_key=settings.COHERE_API_KEY)
         r = await client.chat(
             model=model,
-            messages=[{"role":"system","content":system}] + messages,
+            messages=[{"role": "system", "content": system}] + messages,
             max_tokens=max_tokens, temperature=temperature,
         )
         return r.message.content[0].text, r.usage.tokens.input_tokens + r.usage.tokens.output_tokens
+
+    async def _mistral(self, messages, system, model, max_tokens, temperature):
+        from mistralai import Mistral
+        client = Mistral(api_key=settings.MISTRAL_API_KEY)
+        r = await client.chat.complete_async(
+            model=model,
+            messages=[{"role": "system", "content": system}] + messages,
+            max_tokens=max_tokens, temperature=temperature,
+        )
+        return r.choices[0].message.content, r.usage.total_tokens
 
 
 llm_service = EliteLLMService()
