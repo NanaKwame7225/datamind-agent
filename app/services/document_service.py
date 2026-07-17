@@ -217,6 +217,50 @@ class DocumentExportService:
         run.font.name = 'Times New Roman'
         run.font.size = Pt(12)
 
+    def _add_word_table(self, doc, header, body):
+        """A real Word table: header band, banded rows, right-aligned numbers."""
+        from docx.shared import Pt, RGBColor
+        from docx.enum.text import WD_ALIGN_PARAGRAPH
+        if not header:
+            return
+        table = doc.add_table(rows=1, cols=len(header))
+        try:
+            table.style = 'Light Grid Accent 1'
+        except Exception:
+            try:
+                table.style = 'Table Grid'
+            except Exception:
+                pass
+        # Header row
+        hdr = table.rows[0].cells
+        for k, h in enumerate(header):
+            hdr[k].text = ''
+            p = hdr[k].paragraphs[0]
+            run = p.add_run(str(h))
+            run.font.name = 'Times New Roman'
+            run.font.size = Pt(10)
+            run.font.bold = True
+            run.font.color.rgb = RGBColor(0x0a, 0x4d, 0x4a)
+        # Body
+        def is_num(v):
+            try:
+                float(str(v).replace(',', '').replace('%', ''))
+                return True
+            except Exception:
+                return False
+        for row in body:
+            cells = table.add_row().cells
+            for k in range(len(header)):
+                v = row[k] if k < len(row) else ''
+                cells[k].text = ''
+                p = cells[k].paragraphs[0]
+                if is_num(v):
+                    p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+                run = p.add_run(str(v))
+                run.font.name = 'Times New Roman'
+                run.font.size = Pt(10)
+        doc.add_paragraph()
+
     def _render_narrative_word(self, doc, narrative):
         from docx.shared import Pt, RGBColor
         # Clean JSON leakage
@@ -225,9 +269,26 @@ class DocumentExportService:
         narrative = re.sub(r'",\s*"metrics"\s*:\s*\[.*$', '', narrative, flags=re.DOTALL)
         narrative = narrative.replace('\\n', '\n').replace('\\"', '"')
 
-        for line in narrative.split('\n'):
-            line = line.strip()
+        # Single pass so everything renders in document order. Markdown tables
+        # become REAL tables — as plain paragraphs they read as a wall of pipes.
+        lines = narrative.split('\n')
+        i = -1
+        while i + 1 < len(lines):
+            i += 1
+            line = lines[i].strip()
             if not line:
+                continue
+            # ── Markdown table: a header row followed by a |---|---| separator
+            if (re.match(r'^\|.*\|$', line) and i + 1 < len(lines)
+                    and re.match(r'^\|[\s:\-\|]+\|$', lines[i + 1].strip())):
+                header = [c.strip() for c in line.strip().strip('|').split('|')]
+                j = i + 2
+                body = []
+                while j < len(lines) and re.match(r'^\|.*\|$', lines[j].strip()):
+                    body.append([c.strip() for c in lines[j].strip().strip('|').split('|')])
+                    j += 1
+                self._add_word_table(doc, header, body)
+                i = j - 1
                 continue
             # Markdown headings
             if line.startswith('## '):
@@ -434,6 +495,57 @@ class DocumentExportService:
         buf.seek(0)
         return buf.read()
 
+    def _add_pdf_table(self, story, header, body):
+        """A real PDF table: header band, banded rows, numbers right-aligned."""
+        from reportlab.platypus import Table, TableStyle, Spacer, Paragraph
+        from reportlab.lib import colors
+        from reportlab.lib.styles import ParagraphStyle
+        from reportlab.lib.units import inch
+        if not header:
+            return
+        cell = ParagraphStyle('cell', fontName='Times-Roman', fontSize=8.5, leading=11)
+        head = ParagraphStyle('head', fontName='Times-Bold', fontSize=8.5, leading=11,
+                              textColor=colors.HexColor('#0a4d4a'))
+
+        def is_num(v):
+            try:
+                float(str(v).replace(',', '').replace('%', ''))
+                return True
+            except Exception:
+                return False
+
+        data = [[Paragraph(str(h), head) for h in header]]
+        for row in body:
+            data.append([Paragraph(str(row[k]) if k < len(row) else '', cell)
+                         for k in range(len(header))])
+
+        # Share the page width evenly, but let a text column take more room
+        avail = 6.6 * inch
+        widths = [avail / len(header)] * len(header)
+
+        t = Table(data, colWidths=widths, repeatRows=1)
+        style = [
+            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#eef6f5')),
+            ('LINEBELOW', (0, 0), (-1, 0), 0.9, colors.HexColor('#0a4d4a')),
+            ('GRID', (0, 0), (-1, -1), 0.25, colors.HexColor('#d5dde3')),
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+            ('TOPPADDING', (0, 0), (-1, -1), 4),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
+            ('LEFTPADDING', (0, 0), (-1, -1), 5),
+            ('RIGHTPADDING', (0, 0), (-1, -1), 5),
+        ]
+        for r in range(1, len(data)):
+            if r % 2 == 0:
+                style.append(('BACKGROUND', (0, r), (-1, r), colors.HexColor('#f7fafb')))
+        # Right-align columns whose body values are numeric
+        for c in range(len(header)):
+            vals = [row[c] for row in body if c < len(row)]
+            if vals and all(is_num(v) or v in ('', '—') for v in vals):
+                style.append(('ALIGN', (c, 1), (c, -1), 'RIGHT'))
+        t.setStyle(TableStyle(style))
+        story.append(t)
+        story.append(Spacer(1, 10))
+
     def _render_narrative_pdf(self, story, narrative, body, heading, subhead, bullet):
         from reportlab.platypus import Paragraph, ListFlowable, ListItem
         import re
@@ -447,9 +559,25 @@ class DocumentExportService:
                 story.append(ListFlowable([ListItem(Paragraph(b, bullet)) for b in bullet_buffer], bulletType='bullet', start='•'))
                 bullet_buffer.clear()
 
-        for line in narrative.split('\n'):
-            line = line.strip()
+        lines = narrative.split('\n')
+        i = -1
+        while i + 1 < len(lines):
+            i += 1
+            line = lines[i].strip()
             if not line:
+                continue
+            # ── Markdown table -> a real PDF table
+            if (re.match(r'^\|.*\|$', line) and i + 1 < len(lines)
+                    and re.match(r'^\|[\s:\-\|]+\|$', lines[i + 1].strip())):
+                flush_bullets()
+                header = [c.strip() for c in line.strip().strip('|').split('|')]
+                j = i + 2
+                body_rows = []
+                while j < len(lines) and re.match(r'^\|.*\|$', lines[j].strip()):
+                    body_rows.append([c.strip() for c in lines[j].strip().strip('|').split('|')])
+                    j += 1
+                self._add_pdf_table(story, header, body_rows)
+                i = j - 1
                 continue
             if line.startswith('## '):
                 flush_bullets()
