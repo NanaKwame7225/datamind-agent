@@ -85,6 +85,13 @@ class PowerPointExportService:
                 x = start_x + i * (card_w + gap)
                 self._metric_card(s, x, Inches(2.6), card_w, Inches(2.2), m)
 
+        # ── DATA TABLE SLIDES ──
+        # A markdown table in the narrative is real content. The deck used to
+        # ignore it entirely (only EXECUTIVE SUMMARY and numbered recs were
+        # pulled), so an SQL report arrived with no data in it.
+        for tbl in self._extract_tables(narrative)[:3]:
+            self._add_table_slide(prs, blank, tbl["title"], tbl["header"], tbl["rows"])
+
         # ── CHART SLIDES ──
         if chart_images:
             for ci, img_data in enumerate(chart_images[:6]):
@@ -160,6 +167,108 @@ class PowerPointExportService:
         prs.save(buf)
         buf.seek(0)
         return buf.read()
+
+
+    # ── TABLES ────────────────────────────────────────────────────────────────
+    def _extract_tables(self, narrative):
+        """
+        Pull every markdown table out of the narrative, with the heading that
+        precedes it as the slide title.
+        """
+        if not narrative:
+            return []
+        narrative = re.sub(r'^\s*\{"narrative"\s*:\s*"', '', narrative)
+        narrative = narrative.replace('\\n', '\n').replace('\\"', '"')
+        lines = narrative.split('\n')
+        tables, heading = [], "Data"
+        i = 0
+        while i < len(lines):
+            line = lines[i].strip()
+            if re.match(r'^#{1,3}\s', line):
+                heading = re.sub(r'^#{1,3}\s*', '', line).strip()
+                i += 1
+                continue
+            if (re.match(r'^\|.*\|$', line) and i + 1 < len(lines)
+                    and re.match(r'^\|[\s:\-\|]+\|$', lines[i + 1].strip())):
+                header = [c.strip() for c in line.strip('|').split('|')]
+                j = i + 2
+                rows = []
+                while j < len(lines) and re.match(r'^\|.*\|$', lines[j].strip()):
+                    rows.append([c.strip() for c in lines[j].strip().strip('|').split('|')])
+                    j += 1
+                if header and rows:
+                    tables.append({"title": heading, "header": header, "rows": rows})
+                i = j
+                continue
+            i += 1
+        return tables
+
+    def _add_table_slide(self, prs, blank, title, header, rows):
+        """A real PowerPoint table. Slides can't scroll, so cap the rows and say so."""
+        from pptx.util import Inches, Pt
+        from pptx.dml.color import RGBColor
+        from pptx.enum.text import PP_ALIGN, MSO_ANCHOR
+
+        MAX_ROWS = 12          # beyond this a slide is unreadable
+        MAX_COLS = 8
+        header = header[:MAX_COLS]
+        shown = rows[:MAX_ROWS]
+
+        s = prs.slides.add_slide(blank)
+        self._slide_header(s, prs, title or "Data")
+
+        left = Inches(0.9)
+        top = Inches(1.65)
+        width = prs.slide_width - Inches(1.8)
+        height = Inches(0.42) * (len(shown) + 1)
+
+        shape = s.shapes.add_table(len(shown) + 1, len(header), left, top, width, height)
+        table = shape.table
+
+        def is_num(v):
+            try:
+                float(str(v).replace(',', '').replace('%', ''))
+                return True
+            except Exception:
+                return False
+
+        # Header band
+        for c, h in enumerate(header):
+            cell = table.cell(0, c)
+            cell.text = ""
+            cell.fill.solid()
+            cell.fill.fore_color.rgb = RGBColor(*TEAL)
+            cell.vertical_anchor = MSO_ANCHOR.MIDDLE
+            p = cell.text_frame.paragraphs[0]
+            p.alignment = PP_ALIGN.LEFT
+            r = p.add_run()
+            r.text = str(h)
+            r.font.size = Pt(12)
+            r.font.bold = True
+            r.font.color.rgb = RGBColor(*LIGHT)
+            r.font.name = 'Calibri'
+
+        # Body, banded
+        for ri, row in enumerate(shown, start=1):
+            for c in range(len(header)):
+                v = row[c] if c < len(row) else ''
+                cell = table.cell(ri, c)
+                cell.text = ""
+                cell.fill.solid()
+                cell.fill.fore_color.rgb = RGBColor(0xff, 0xff, 0xff) if ri % 2 else RGBColor(0xf2, 0xf7, 0xf8)
+                cell.vertical_anchor = MSO_ANCHOR.MIDDLE
+                p = cell.text_frame.paragraphs[0]
+                p.alignment = PP_ALIGN.RIGHT if is_num(v) else PP_ALIGN.LEFT
+                r = p.add_run()
+                r.text = str(v)
+                r.font.size = Pt(11)
+                r.font.color.rgb = RGBColor(0x1a, 0x20, 0x30)
+                r.font.name = 'Calibri'
+
+        if len(rows) > MAX_ROWS:
+            self._text(s, f"Showing the first {MAX_ROWS} of {len(rows)} rows.",
+                       Inches(0.9), prs.slide_height - Inches(0.85),
+                       Inches(11.5), Inches(0.4), 11, GREY, italic=True)
 
     # ── HELPERS ──
     def _fill_bg(self, slide, prs, rgb):
