@@ -6,12 +6,18 @@ import sys, os
 sys.path.insert(0, os.path.dirname(__file__))
 
 from fastapi import FastAPI, Request
+import os
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 import logging
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
+
+def _docs_enabled() -> bool:
+    """API docs expose every route. Opt-in only."""
+    return os.environ.get("ENABLE_API_DOCS", "").lower() in ("1", "true", "yes")
+
 
 app = FastAPI(
     title="DataMind Agent API",
@@ -29,17 +35,29 @@ Full stack with:
 Built by NkaySolutions · Accra, Ghana
     """,
     version="2.0.0",
-    docs_url="/docs",
-    redoc_url="/redoc",
+    # /docs publishes an interactive map of every endpoint — a far bigger
+    # giveaway than any front-end code. Off in production; set
+    # ENABLE_API_DOCS=true in Railway when you need it.
+    docs_url="/docs" if _docs_enabled() else None,
+    redoc_url="/redoc" if _docs_enabled() else None,
+    openapi_url="/openapi.json" if _docs_enabled() else None,
 )
+
+# Only these origins may call the API from a browser. allow_origins=["*"] let
+# any site on the internet drive your API using a visitor's session.
+_allowed = [o.strip() for o in os.environ.get(
+    "ALLOWED_ORIGINS",
+    "https://nanakwame7225.github.io"
+).split(",") if o.strip()]
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_allowed,
     allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type"],
 )
+logger.info("CORS allowed origins: %s", _allowed)
 
 # ── Initialise memory DB ──────────────────────────────────────────────────────
 try:
