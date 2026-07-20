@@ -1,17 +1,23 @@
 """
 DataMind Agent — SQL Execution Router
+
 POST /api/v1/sql/query      — run SQL against uploaded data
 POST /api/v1/sql/natural    — natural language to SQL
 POST /api/v1/sql/profile    — full data profile via SQL
 GET  /api/v1/sql/samples    — sample query suggestions
+
+All routes require a signed-in user (guest sessions count). Auth is enforced
+at the router level via the shared require_user dependency.
 """
 import logging
 import pandas as pd
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 from typing import Optional
 
-router = APIRouter()
+from app.routers.auth import require_user
+
+router = APIRouter(dependencies=[Depends(require_user)])
 logger = logging.getLogger(__name__)
 
 
