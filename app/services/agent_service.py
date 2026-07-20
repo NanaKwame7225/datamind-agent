@@ -35,7 +35,15 @@ AGENTS = {
             "anything about the data that would affect the answer. Cite exact columns, "
             "counts, and values (e.g. 'revenue is null in 4 of 36 rows: Feb-North, "
             "Mar-East...'). Do NOT give a generic data-health overview — focus on what "
-            "matters for THIS question. 2-4 specific findings with real numbers."
+            "matters for THIS question. 2-4 specific findings with real numbers.\n\n"
+            "GROUNDING CHECK (do this FIRST, before anything else): compare the nouns and "
+            "metrics in the question against the actual column names in the data summary. "
+            "If the question asks about an entity or metric that is NOT a column (e.g. it "
+            "asks about 'games' or 'profit' but the columns are value_a, value_b, period), "
+            "your FIRST finding must state that plainly — name exactly which requested "
+            "thing has no matching column. Do NOT assume value_a means 'profit', or that a "
+            "period column means 'month', unless the data explicitly says so. A guessed "
+            "mapping is a data-quality risk, not a fact — flag it as an assumption."
         ),
     },
     "trends": {
@@ -47,7 +55,11 @@ AGENTS = {
             "from the data — 'North grew from 120k to 149k (+24%) while South fell 8%', "
             "not 'there is growth'. Identify the specific segments, periods, or categories "
             "that matter for what they asked. Do NOT summarise everything — zero in on "
-            "what answers the question. 2-4 findings, every one quantified."
+            "what answers the question. 2-4 findings, every one quantified.\n\n"
+            "Only reason about columns that actually exist in the data summary. If the "
+            "question names something that is not a column, do not invent it or silently "
+            "substitute a similarly-shaped column — refer to columns by their real names "
+            "and note the mismatch."
         ),
     },
     "risk": {
@@ -67,7 +79,24 @@ AGENTS = {
 SYNTH_SYSTEM = (
     "You are the lead analyst writing ONE authoritative answer for a business user. "
     "You are given the user's EXACT question, a data summary, and specialist findings.\n\n"
-    "ABSOLUTE RULES:\n"
+    "RULE 0 — GROUND THE QUESTION IN THE ACTUAL COLUMNS (do this before any other rule):\n"
+    "The data summary lists the real column names. Check the question's key nouns and "
+    "metrics against them. If the question asks about an entity or metric that does NOT "
+    "exist as a column (e.g. asks about 'games' or 'profit' when the columns are only "
+    "value_a, value_b, value_c, period), then:\n"
+    "  (a) Your FIRST sentence must say so plainly — name exactly what is missing: "
+    "'This dataset has no game or profit column.'\n"
+    "  (b) Then ask the single clarifying question that would resolve it: 'Did you mean "
+    "value_a — and is that revenue or profit?'\n"
+    "  (c) Then, only if a reasonable interpretation exists, give a best-effort answer "
+    "that EXPLICITLY labels the assumption: 'Treating value_a as an unlabelled metric, "
+    "its highest value is...'. Never present a guessed column mapping as if it were a "
+    "fact in the data, and never silently rename a column to match the question. A "
+    "column called 'period' is not automatically 'month'; value_a is not automatically "
+    "'profit'.\n"
+    "If, and ONLY if, the question's nouns and metrics DO map cleanly onto real columns, "
+    "ignore Rule 0 and answer with full confidence per the rules below.\n\n"
+    "ABSOLUTE RULES (apply once the question is grounded):\n"
     "1. Answer the SPECIFIC question asked — nothing more, nothing less. If they ask "
     "'which region is most at risk', name the region and say why; do NOT give a general "
     "overview of all regions. If they ask 'why did March drop', explain March "
@@ -78,10 +107,12 @@ SYNTH_SYSTEM = (
     "3. NO generic filler. Ban phrases like 'the data shows interesting patterns', "
     "'overall performance is strong', 'there are several factors'. If a sentence would "
     "be true of almost any dataset, delete it.\n"
-    "4. Lead with the DIRECT answer to their exact question in the first sentence. Then "
-    "the specific evidence. Then only caveats that genuinely affect THIS answer.\n"
-    "5. If the data cannot answer the question, say exactly what's missing — don't pad "
-    "with unrelated observations.\n"
+    "4. Lead with the DIRECT answer to their exact question in the first sentence "
+    "(unless Rule 0 applies, in which case the missing-column statement comes first). "
+    "Then the specific evidence. Then only caveats that genuinely affect THIS answer.\n"
+    "5. If the data cannot answer the question, say exactly what's missing FIRST — "
+    "don't pad with unrelated observations, and don't bury the gap under a confident-"
+    "sounding answer.\n"
     "Do NOT mention 'agents', 'specialists', or the panel. Speak as one expert. "
     "Precise, specific, grounded in this dataset's actual values."
 )
@@ -122,7 +153,10 @@ class AgentService:
             import pandas as pd
             df = pd.DataFrame(data)
             cols = columns or list(df.columns)
-            lines = [f"Rows: {n}", f"Columns ({len(cols)}): {', '.join(map(str, cols))}"]
+            lines = [f"Rows: {n}", f"Columns ({len(cols)}): {', '.join(map(str, cols))}",
+                     "These are the ONLY columns in the data. If the question refers to "
+                     "anything not in this list, that thing is not present — say so rather "
+                     "than mapping it onto one of these columns."]
             num_lines, cat_lines = [], []
             for c in cols:
                 if c not in df.columns:
@@ -162,7 +196,9 @@ class AgentService:
                     show=[c for c in dict.fromkeys([*labels,m]) if c in df.columns]
                     top=df.nlargest(12,m)[show]
                     lines.append(f"TOP 12 ROWS BY {str(m).upper()} (from the WHOLE dataset — "
-                                 f"authoritative for 'which is highest/top/best'):")
+                                 f"authoritative for 'which is highest/top/best', but ONLY "
+                                 f"for the actual column {str(m)}, not for a differently-named "
+                                 f"thing the user may have asked about):")
                     lines.append(top.to_string(index=False,max_colwidth=32)[:1200])
             except Exception:
                 pass
@@ -176,7 +212,10 @@ class AgentService:
         """Pure-Python summary if pandas isn't available."""
         cols = columns or (list(data[0].keys()) if isinstance(data[0], dict) else [])
         n = len(data)
-        lines = [f"Rows: {n}", f"Columns ({len(cols)}): {', '.join(map(str, cols))}"]
+        lines = [f"Rows: {n}", f"Columns ({len(cols)}): {', '.join(map(str, cols))}",
+                 "These are the ONLY columns in the data. If the question refers to "
+                 "anything not in this list, that thing is not present — say so rather "
+                 "than mapping it onto one of these columns."]
         lines.append(f"Sample rows (first 20 of {n}):")
         lines.append(json.dumps(data[:20], default=str)[:3000])
         return "\n".join(lines)
@@ -230,11 +269,25 @@ class AgentService:
 
         system = (
             "You are an elite data analyst. Answer the user's EXACT question with "
-            "surgical specificity. RULES: (1) Answer only what's asked — name the "
+            "surgical specificity.\n"
+            "RULE 0 — GROUND FIRST: check the question's key nouns and metrics against the "
+            "actual column names in the data summary. If the question asks about an entity "
+            "or metric that is NOT a column (e.g. 'games' or 'profit' when the columns are "
+            "value_a, value_b, period), then your FIRST sentence must say so plainly ('This "
+            "dataset has no game or profit column'), THEN ask the one clarifying question "
+            "that resolves it ('Did you mean value_a, and is it revenue or profit?'), THEN "
+            "give a best-effort answer only if a reasonable reading exists, explicitly "
+            "labelling the assumption ('treating value_a as an unlabelled metric...'). "
+            "Never silently rename a column to fit the question; 'period' is not "
+            "automatically 'month' and value_a is not automatically 'profit'. If the "
+            "question DOES map cleanly onto real columns, skip Rule 0 and answer with full "
+            "confidence.\n"
+            "OTHER RULES: (1) Answer only what's asked — name the "
             "specific region/month/category/row, don't give a general overview. "
             "(2) Cite real values from the data ('North fell 240k→197k, -18%'), never "
             "vague direction words. (3) No generic filler — if a sentence would be true "
-            "of any dataset, cut it. (4) First sentence directly answers the question. "
+            "of any dataset, cut it. (4) First sentence directly answers the question "
+            "(or, under Rule 0, states what's missing). "
             "(5) Briefly note data-quality caveats or risks ONLY if they affect this "
             "answer. Be precise, specific, grounded in the actual numbers below."
         )
@@ -246,8 +299,11 @@ class AgentService:
                 f"THE EXACT QUESTION:\n\"{question}\"\n"
                 f"════════════════════════════════════════\n\n"
                 f"Data summary:\n{data_summary}\n\n"
-                f"Answer now — first sentence directly answers \"{question}\" with a "
-                f"specific claim citing real values. Then the specific evidence."
+                f"Answer now. First, silently check the question's nouns against the real "
+                f"columns above. If they match, answer \"{question}\" directly with a "
+                f"specific claim citing real values, then the evidence. If something asked "
+                f"about is not a column, say what's missing first, ask the clarifying "
+                f"question, then give a clearly-labelled best-effort reading."
             ),
         }]
         try:
@@ -316,9 +372,12 @@ class AgentService:
                 f"════════════════════════════════════════\n\n"
                 f"Data summary:\n{data_summary}\n\n"
                 f"Specialist findings to draw from:\n{findings_block}{emphasis_note}\n\n"
-                f"Now write your answer. First sentence must directly answer "
-                f"\"{question}\" with a specific claim citing real values. Then the "
-                f"specific supporting evidence. No generic overview."
+                f"Now write your answer. First apply Rule 0: if the question names "
+                f"something that is not a real column, lead with what's missing, ask the "
+                f"clarifying question, then give a labelled best-effort reading. Otherwise, "
+                f"the first sentence must directly answer \"{question}\" with a specific "
+                f"claim citing real values, then the specific supporting evidence. No "
+                f"generic overview."
             ),
         }]
         try:
