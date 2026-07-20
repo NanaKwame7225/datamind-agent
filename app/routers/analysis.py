@@ -11,10 +11,13 @@ Fixes over v2:
   • Memory layer stores each analysis and feeds prior context back in.
   • Causal flags, bias audit and advanced statistics surface as Insights.
   • A partial elite result still yields insights rather than nothing.
+
+All routes require a signed-in user (guest sessions count). Auth is enforced
+at the router level via the shared require_user dependency.
 """
 import time, logging, json
 from pydantic import BaseModel as _BaseModel
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from typing import Optional
 import pandas as pd
 
@@ -25,8 +28,9 @@ from app.models.schemas import (
 from app.services.llm_service import llm_service
 from app.services.analysis_service import analysis_service
 from app.services.viz_service import viz_service
+from app.routers.auth import require_user
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_user)])
 logger = logging.getLogger(__name__)
 
 
