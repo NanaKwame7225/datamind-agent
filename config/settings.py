@@ -9,7 +9,15 @@ class Settings(BaseSettings):
     APP_NAME: str = "DataMind Agent"
     DEBUG: bool = False
     SECRET_KEY: str = "change-me-in-production-32-chars-min"
-    ALLOWED_ORIGINS: list[str] = ["https://nanakwame7225.github.io", "http://localhost:3000", "http://localhost:8080"]
+
+    # Stored as a plain comma-separated string so pydantic-settings never
+    # tries to JSON-parse the env var (that's what was crashing the boot).
+    # Use `settings.allowed_origins_list` anywhere you need an actual list.
+    ALLOWED_ORIGINS: str = "https://nanakwame7225.github.io,http://localhost:3000,http://localhost:8080"
+
+    @property
+    def allowed_origins_list(self) -> list[str]:
+        return [o.strip() for o in self.ALLOWED_ORIGINS.split(",") if o.strip()]
 
     # LLM
     GROQ_API_KEY: Optional[str] = None
