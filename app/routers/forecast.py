@@ -3,36 +3,33 @@ DataMind Agent — Predictive Analytics Router
 POST /api/v1/forecast/predict   — forecast future periods with confidence intervals
 POST /api/v1/forecast/scenario  — what-if: change a driver, see the projected effect
 POST /api/v1/forecast/drivers   — which variables most move with the target
+
+All routes require a signed-in user (guest sessions count). Auth is enforced
+at the router level via the shared require_user dependency.
 """
 import logging, traceback
 import pandas as pd
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 from typing import Optional, List
 
-router = APIRouter()
+from app.routers.auth import require_user
+
+router = APIRouter(dependencies=[Depends(require_user)])
 logger = logging.getLogger(__name__)
-
-
 class ForecastRequest(BaseModel):
     data: List[dict]
     periods: int = 3
     target_columns: Optional[List[str]] = None
     time_column: Optional[str] = None
-
-
 class ScenarioRequest(BaseModel):
     data: List[dict]
     target: str
     driver: str
     change_pct: float
-
-
 def _svc():
     from app.services.forecast_service import forecast_service
     return forecast_service
-
-
 @router.post("/predict")
 async def predict(req: ForecastRequest):
     """Forecast future periods for the numeric columns in the dataset."""
@@ -46,8 +43,6 @@ async def predict(req: ForecastRequest):
     except Exception as e:
         logger.error(f"Forecast failed: {e}\n{traceback.format_exc()}")
         return {"success": False, "error": str(e)}
-
-
 @router.post("/scenario")
 async def scenario(req: ScenarioRequest):
     """Estimate the effect on a target of changing a driver by some percentage."""
@@ -63,8 +58,6 @@ async def scenario(req: ScenarioRequest):
     except Exception as e:
         logger.error(f"Scenario failed: {e}\n{traceback.format_exc()}")
         return {"success": False, "error": str(e)}
-
-
 @router.post("/drivers")
 async def drivers(req: ForecastRequest):
     """Return the variables most strongly associated with each target column."""
