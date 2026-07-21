@@ -653,4 +653,661 @@ class DocumentExportService:
         return text.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
 
 
+    # ── EXCEL EXPORT ──────────────────────────────────────────────────────────
+
+    def build_excel_report(self, result: dict, finance: dict = None, chart_images: list = None) -> bytes:
+        """
+        Professional multi-sheet workbook:
+          • Summary   — title block, question, the AI narrative (tables extracted)
+          • Metrics   — KPI table
+          • Insights  — findings table
+          • Data      — the full dataset (falls back to raw_data_preview), styled
+          • Finance   — tax / accounting / fraud / priority actions (when present)
+          • Charts    — the dashboard chart images embedded
+        Styled headers, frozen header rows, auto-sized columns, numbers as numbers.
+        """
+        from openpyxl import Workbook
+        from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+        from openpyxl.utils import get_column_letter
+        import re, base64, io as _io
+
+        # ── House style ──
+        BRAND = "0A4D4A"
+        BRAND_FILL = PatternFill("solid", fgColor="0A4D4A")
+        HEAD_FILL = PatternFill("solid", fgColor="EEF6F5")
+        BAND_FILL = PatternFill("solid", fgColor="F7FAFB")
+        WHITE = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
+        HEAD_FONT = Font(name="Calibri", size=10, bold=True, color=BRAND)
+        BODY_FONT = Font(name="Calibri", size=10, color="222222")
+        TITLE_FONT = Font(name="Calibri", size=18, bold=True, color=BRAND)
+        SUB_FONT = Font(name="Calibri", size=12, bold=True, color="222222")
+        META_FONT = Font(name="Calibri", size=9, color="666666")
+        ITAL = Font(name="Calibri", size=9, italic=True, color="666666")
+        thin = Side(style="thin", color="D5DDE3")
+        BORDER = Border(left=thin, right=thin, top=thin, bottom=thin)
+        LEFT = Alignment(horizontal="left", vertical="center", wrap_text=True)
+        RIGHT = Alignment(horizontal="right", vertical="center")
+        CENTER = Alignment(horizontal="center", vertical="center")
+
+        industry = str(result.get("industry", "General")).replace("_", " ").title()
+        query = result.get("query", "Data Analysis")
+        date_str = datetime.now(timezone.utc).strftime("%d %B %Y")
+
+        wb = Workbook()
+
+        def _num(v):
+            """Return a float if the value is numeric, else None."""
+            if isinstance(v, bool):
+                return None
+            if isinstance(v, (int, float)):
+                return float(v)
+            if v is None:
+                return None
+            s = str(v).strip().replace(",", "")
+            pct = s.endswith("%")
+            if pct:
+                s = s[:-1]
+            try:
+                f = float(s)
+                return f
+            except Exception:
+                return None
+
+        def _autosize(ws, max_w=60, min_w=10):
+            widths = {}
+            for row in ws.iter_rows():
+                for cell in row:
+                    if cell.value is None:
+                        continue
+                    col = cell.column_letter
+                    ln = max(len(x) for x in str(cell.value).split("\n"))
+                    widths[col] = max(widths.get(col, 0), ln)
+            for col, w in widths.items():
+                ws.column_dimensions[col].width = max(min_w, min(max_w, w + 3))
+
+        def _style_table(ws, header_row, first_data_row, last_row, ncols,
+                         numeric_cols=None):
+            numeric_cols = numeric_cols or set()
+            # Header band
+            for c in range(1, ncols + 1):
+                cell = ws.cell(row=header_row, column=c)
+                cell.font = HEAD_FONT
+                cell.fill = HEAD_FILL
+                cell.alignment = LEFT
+                cell.border = BORDER
+            # Body
+            for r in range(first_data_row, last_row + 1):
+                banded = (r - first_data_row) % 2 == 1
+                for c in range(1, ncols + 1):
+                    cell = ws.cell(row=r, column=c)
+                    cell.font = BODY_FONT
+                    cell.border = BORDER
+                    if banded:
+                        cell.fill = BAND_FILL
+                    cell.alignment = RIGHT if c in numeric_cols else LEFT
+            ws.freeze_panes = ws.cell(row=first_data_row, column=1)
+
+        # ══ SHEET 1: SUMMARY ══════════════════════════════════════════════════
+        ws = wb.active
+        ws.title = "Summary"
+        ws.sheet_view.showGridLines = False
+        ws["A1"] = "DataMind Agent"
+        ws["A1"].font = TITLE_FONT
+        ws["A2"] = f"{industry} Analysis Report"
+        ws["A2"].font = SUB_FONT
+        ws["A3"] = f"{date_str}  |  {SIGNATURE['name']}  |  {SIGNATURE['org']}, {SIGNATURE['location']}"
+        ws["A3"].font = META_FONT
+        ws["A5"] = "Analysis Question"
+        ws["A5"].font = Font(name="Calibri", size=12, bold=True, color=BRAND)
+        ws["A6"] = str(query)
+        ws["A6"].font = BODY_FONT
+        ws["A6"].alignment = LEFT
+
+        r = 8
+        narrative = result.get("narrative", "") or ""
+        if narrative:
+            ws.cell(row=r, column=1, value="Analysis & Recommendations").font = \
+                Font(name="Calibri", size=12, bold=True, color=BRAND)
+            r += 1
+            # Clean JSON leakage the same way the Word/PDF builders do
+            narrative = re.sub(r'^\s*\{"narrative"\s*:\s*"', '', narrative)
+            narrative = re.sub(r'",\s*"metrics"\s*:\s*\[.*$', '', narrative, flags=re.DOTALL)
+            narrative = narrative.replace('\\n', '\n').replace('\\"', '"')
+            for raw in narrative.split("\n"):
+                line = raw.rstrip()
+                if not line.strip():
+                    continue
+                # Skip markdown table rows in the summary prose — they'd read as pipes.
+                if re.match(r'^\|.*\|$', line.strip()):
+                    continue
+                txt = line
+                bold = False
+                if txt.strip().startswith("## "):
+                    txt = txt.strip()[3:]; bold = True
+                elif txt.strip().startswith("### "):
+                    txt = txt.strip()[4:]; bold = True
+                txt = re.sub(r'\*\*(.+?)\*\*', r'\1', txt)
+                cell = ws.cell(row=r, column=1, value=txt)
+                cell.font = Font(name="Calibri", size=11, bold=True, color=BRAND) if bold \
+                    else BODY_FONT
+                cell.alignment = LEFT
+                r += 1
+        ws.column_dimensions["A"].width = 110
+
+        # ══ SHEET 2: METRICS ══════════════════════════════════════════════════
+        metrics = result.get("metrics", []) or []
+        if metrics:
+            ms = wb.create_sheet("Metrics")
+            ms.sheet_view.showGridLines = False
+            hdr = ["Metric", "Value", "Change vs previous", "Benchmark"]
+            for c, h in enumerate(hdr, 1):
+                ms.cell(row=1, column=c, value=h)
+            for i, m in enumerate(metrics, start=2):
+                ms.cell(row=i, column=1, value=str(m.get("label", "")))
+                v = _num(m.get("value"))
+                ms.cell(row=i, column=2, value=v if v is not None else str(m.get("value", "")))
+                cp = m.get("change_pct")
+                ms.cell(row=i, column=3,
+                        value=(f"{cp}%" if cp is not None else ""))
+                ms.cell(row=i, column=4, value=str(m.get("benchmark", "") or ""))
+            _style_table(ms, 1, 2, len(metrics) + 1, 4, numeric_cols={2})
+            _autosize(ms)
+
+        # ══ SHEET 3: INSIGHTS ═════════════════════════════════════════════════
+        insights = result.get("insights", []) or []
+        if insights:
+            ins = wb.create_sheet("Insights")
+            ins.sheet_view.showGridLines = False
+            hdr = ["Severity", "Finding", "Detail", "Confidence", "Method"]
+            for c, h in enumerate(hdr, 1):
+                ins.cell(row=1, column=c, value=h)
+            for i, it in enumerate(insights, start=2):
+                ins.cell(row=i, column=1, value=str(it.get("severity", "info")).upper())
+                ins.cell(row=i, column=2, value=str(it.get("title", "")))
+                ins.cell(row=i, column=3, value=str(it.get("body", "")))
+                conf = it.get("confidence")
+                ins.cell(row=i, column=4,
+                         value=(f"{int(conf*100)}%" if conf else ""))
+                ins.cell(row=i, column=5, value=str(it.get("source", "") or ""))
+            _style_table(ins, 1, 2, len(insights) + 1, 5)
+            # Detail column is long — give it room and wrap
+            ins.column_dimensions["C"].width = 70
+            ins.column_dimensions["B"].width = 34
+            ins.column_dimensions["E"].width = 30
+            _autosize(ins, max_w=70)
+            ins.column_dimensions["C"].width = 70  # keep after autosize
+
+        # ══ SHEET 4: DATA ═════════════════════════════════════════════════════
+        # Prefer the full dataset the frontend may send; fall back to the preview.
+        data_rows = result.get("data")
+        if not isinstance(data_rows, list) or not data_rows:
+            data_rows = result.get("raw_data_preview") or []
+        if isinstance(data_rows, list) and data_rows and isinstance(data_rows[0], dict):
+            ds = wb.create_sheet("Data")
+            ds.sheet_view.showGridLines = False
+            # Union of keys, preserving first-seen order
+            cols = []
+            for row in data_rows[:2000]:
+                for k in row.keys():
+                    if k not in cols:
+                        cols.append(k)
+            for c, k in enumerate(cols, 1):
+                ds.cell(row=1, column=c, value=str(k).replace("_", " "))
+            numeric_cols = set()
+            MAX_ROWS = 5000
+            for i, row in enumerate(data_rows[:MAX_ROWS], start=2):
+                for c, k in enumerate(cols, 1):
+                    v = row.get(k)
+                    nv = _num(v)
+                    if nv is not None and not (isinstance(v, str) and v.strip() == ""):
+                        ds.cell(row=i, column=c, value=nv)
+                        numeric_cols.add(c)
+                    else:
+                        ds.cell(row=i, column=c, value=("" if v is None else str(v)))
+            last = min(len(data_rows), MAX_ROWS) + 1
+            # A column is "numeric" only if it was numeric in every populated cell;
+            # recompute cleanly to avoid right-aligning mixed columns.
+            clean_numeric = set()
+            for c in range(1, len(cols) + 1):
+                saw_val = False
+                all_num = True
+                for r in range(2, last + 1):
+                    val = ds.cell(row=r, column=c).value
+                    if val == "" or val is None:
+                        continue
+                    saw_val = True
+                    if not isinstance(val, (int, float)):
+                        all_num = False
+                        break
+                if saw_val and all_num:
+                    clean_numeric.add(c)
+            _style_table(ds, 1, 2, last, len(cols), numeric_cols=clean_numeric)
+            _autosize(ds, max_w=40)
+            if len(data_rows) > MAX_ROWS:
+                note = ds.cell(row=last + 2, column=1,
+                               value=f"Showing the first {MAX_ROWS:,} of {len(data_rows):,} rows.")
+                note.font = ITAL
+
+        # ══ ANALYTICAL DASHBOARD (first sheet) ══════════════════════════════
+        try:
+            self._build_dashboard_sheet(wb, result, data_rows if isinstance(data_rows, list) else [])
+        except Exception as e:
+            logger.warning(f"Dashboard sheet skipped: {e}")
+
+        # ══ SHEET 5: FINANCE ══════════════════════════════════════════════════
+        if finance:
+            self._add_finance_excel(wb, finance, HEAD_FONT, HEAD_FILL, BODY_FONT,
+                                    BRAND, BORDER, LEFT, RIGHT, _num, _autosize, _style_table)
+
+        # ══ SHEET 6: CHARTS ═══════════════════════════════════════════════════
+        if chart_images:
+            try:
+                from openpyxl.drawing.image import Image as XLImage
+                cs = wb.create_sheet("Charts")
+                cs.sheet_view.showGridLines = False
+                cs.column_dimensions["A"].width = 14
+                anchor_row = 1
+                placed = 0
+                for ci in chart_images[:12]:
+                    if not ci or not ci.get("image"):
+                        continue
+                    title = ci.get("title", "") or ""
+                    if title:
+                        tcell = cs.cell(row=anchor_row, column=1, value=title)
+                        tcell.font = Font(name="Calibri", size=12, bold=True, color=BRAND)
+                        anchor_row += 1
+                    if ci.get("subtitle"):
+                        scell = cs.cell(row=anchor_row, column=1, value=ci["subtitle"])
+                        scell.font = ITAL
+                        anchor_row += 1
+                    try:
+                        b64 = ci["image"].split(",")[-1]
+                        img_bytes = base64.b64decode(b64)
+                        bio = _io.BytesIO(img_bytes)
+                        img = XLImage(bio)
+                        # Scale to a sensible width (~640px) keeping aspect ratio
+                        if img.width and img.height:
+                            target_w = 640
+                            ratio = target_w / float(img.width)
+                            img.width = target_w
+                            img.height = int(img.height * ratio)
+                        img.anchor = f"A{anchor_row}"
+                        cs.add_image(img)
+                        # ~20px per row → advance enough rows to clear the image
+                        rows_tall = int((img.height or 320) / 18) + 3
+                        anchor_row += rows_tall
+                        placed += 1
+                    except Exception as e:
+                        logger.warning(f"Excel chart embed failed: {e}")
+                        anchor_row += 2
+                if not placed:
+                    # No image decoded — drop the empty sheet to avoid confusion
+                    wb.remove(cs)
+            except Exception as e:
+                logger.warning(f"Excel charts sheet skipped: {e}")
+
+        # Make sure Summary is the active/first sheet on open
+        wb.active = 0
+
+        buf = io.BytesIO()
+        wb.save(buf)
+        buf.seek(0)
+        return buf.read()
+
+    # ── ANALYTICAL DASHBOARD SHEET ────────────────────────────────────────────
+    # Builds an executive summary sheet like a hand-made analyst workbook:
+    # a metrics block, several "Top-N by value" breakdown tables, and a recency
+    # cross-tab with grouped headers — all computed from the actual data.
+
+    def _build_dashboard_sheet(self, wb, result: dict, data_rows: list):
+        from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+        from openpyxl.utils import get_column_letter
+        try:
+            import pandas as pd
+        except Exception:
+            return  # pandas needed for the aggregations; skip cleanly if absent
+        if not data_rows or not isinstance(data_rows[0], dict):
+            return
+
+        df = pd.DataFrame(data_rows)
+        if df.empty:
+            return
+
+        # ── Palette (executive blue, matching a classic analyst workbook) ──
+        BAND = PatternFill("solid", fgColor="4472C4")     # header band
+        BAND2 = PatternFill("solid", fgColor="8FAADC")    # sub-header / group band
+        BAND_GREY = PatternFill("solid", fgColor="A6A6A6") # secondary group band
+        LIGHT = PatternFill("solid", fgColor="D9E1F2")    # metric label fill
+        TOTAL_FILL = PatternFill("solid", fgColor="DDEBF7")
+        WHITE_B = Font(name="Calibri", size=10, bold=True, color="FFFFFF")
+        HEAD_B = Font(name="Calibri", size=10, bold=True, color="1F3864")
+        BODY = Font(name="Calibri", size=10, color="000000")
+        BODY_B = Font(name="Calibri", size=10, bold=True, color="000000")
+        TITLE = Font(name="Calibri", size=15, bold=True, color="1F3864")
+        SUBT = Font(name="Calibri", size=9, italic=True, color="595959")
+        thin = Side(style="thin", color="BFBFBF")
+        BORDER = Border(left=thin, right=thin, top=thin, bottom=thin)
+        L = Alignment(horizontal="left", vertical="center")
+        R = Alignment(horizontal="right", vertical="center")
+        C = Alignment(horizontal="center", vertical="center")
+
+        ws = wb.create_sheet("Dashboard")
+        ws.sheet_view.showGridLines = False
+
+        # ── Classify columns ──
+        num_cols, cat_cols = [], []
+        for c in df.columns:
+            s = pd.to_numeric(df[c], errors="coerce")
+            if s.notna().sum() >= max(3, 0.5 * df[c].notna().sum()):
+                num_cols.append(c)
+            else:
+                nun = df[c].nunique(dropna=True)
+                if 0 < nun <= max(50, len(df) // 2):
+                    cat_cols.append(c)
+
+        def numify(c):
+            return pd.to_numeric(df[c], errors="coerce")
+
+        # The primary value column: prefer money-ish/aggregate names, else biggest sum
+        def pick_value_col():
+            if not num_cols:
+                return None
+            pref = [c for c in num_cols if any(w in str(c).lower()
+                    for w in ("value", "sales", "revenue", "amount", "total", "gross",
+                              "net", "price", "cost", "spend", "gmv"))]
+            skip = ("rank", "id", "index", "year", "no", "number", "code", "qty", "count")
+            base = pref or [c for c in num_cols if not any(k in str(c).lower() for k in skip)] or num_cols
+            sums = {c: float(numify(c).sum()) for c in base}
+            return max(sums, key=sums.get) if sums else num_cols[0]
+
+        value_col = pick_value_col()
+        # A count-ish column (units/volume/qty) for a secondary measure, if present
+        count_col = next((c for c in num_cols if any(w in str(c).lower()
+                          for w in ("volume", "units", "qty", "quantity", "count"))), None)
+
+        industry = str(result.get("industry", "General")).replace("_", " ").title()
+        date_str = datetime.now(timezone.utc).strftime("%d %B %Y")
+
+        def fmt(v):
+            try:
+                return f"{float(v):,.0f}"
+            except Exception:
+                return str(v)
+
+        # ── Title band ──
+        ws.merge_cells("A1:F1")
+        ws["A1"] = f"{industry} Analysis — Overview"
+        ws["A1"].font = TITLE
+        ws.merge_cells("A2:F2")
+        cur = " · Values summarised" + (f" by {value_col}" if value_col else "")
+        ws["A2"] = f"{len(df):,} records · {date_str}{cur}"
+        ws["A2"].font = SUBT
+        row = 4
+
+        # ── Helper: write a titled table with a coloured header band ──
+        def section_header(r, c0, span, text, fill=BAND, font=WHITE_B):
+            for i in range(span):
+                cell = ws.cell(row=r, column=c0 + i)
+                cell.fill = fill
+                cell.border = BORDER
+                if i == 0:
+                    cell.value = text
+                    cell.font = font
+                    cell.alignment = L
+            return r + 1
+
+        def col_headers(r, c0, headers):
+            for i, h in enumerate(headers):
+                cell = ws.cell(row=r, column=c0 + i, value=h)
+                cell.font = HEAD_B
+                cell.fill = LIGHT
+                cell.border = BORDER
+                cell.alignment = L if i == 0 else R
+            return r + 1
+
+        def data_row(r, c0, cells, numeric_from=1, bold=False, fill=None):
+            for i, v in enumerate(cells):
+                cell = ws.cell(row=r, column=c0 + i)
+                is_num = isinstance(v, (int, float)) and not isinstance(v, bool)
+                cell.value = v
+                cell.font = BODY_B if bold else BODY
+                cell.border = BORDER
+                cell.alignment = R if i >= numeric_from else L
+                if is_num:
+                    cell.number_format = "#,##0"
+                if fill:
+                    cell.fill = fill
+            return r + 1
+
+        # ── KEY METRICS block (left) ──
+        metrics = []
+        metrics.append((f"Total Records", len(df)))
+        if value_col is not None:
+            metrics.append((f"Total {value_col.replace('_',' ').title()}", float(numify(value_col).sum())))
+        if count_col is not None:
+            metrics.append((f"Total {count_col.replace('_',' ').title()}", float(numify(count_col).sum())))
+        # a rate-ish column → show its mean
+        rate_col = next((c for c in num_cols if any(w in str(c).lower()
+                        for w in ("margin", "rate", "pct", "percent", "ratio"))), None)
+        if rate_col is not None:
+            metrics.append((f"Average {rate_col.replace('_',' ').title()}",
+                            round(float(numify(rate_col).mean()), 1)))
+        for c in cat_cols[:3]:
+            metrics.append((f"Distinct {c.replace('_',' ').title()}", int(df[c].nunique(dropna=True))))
+
+        km_row = section_header(row, 1, 2, "KEY METRICS")
+        for label, val in metrics:
+            cell = ws.cell(row=km_row, column=1, value=label)
+            cell.font = BODY; cell.fill = LIGHT; cell.border = BORDER; cell.alignment = L
+            vcell = ws.cell(row=km_row, column=2, value=val)
+            vcell.font = BODY_B; vcell.border = BORDER; vcell.alignment = R
+            if isinstance(val, (int, float)) and not isinstance(val, bool):
+                vcell.number_format = "#,##0.#" if isinstance(val, float) else "#,##0"
+            km_row += 1
+        metrics_bottom = km_row
+
+        # ── Breakdown tables: Top-N by value for the best categorical columns ──
+        # Rank categoricals by how concentrated their value is (more explanatory).
+        breakdown_cols = []
+        if value_col is not None:
+            scored = []
+            for c in cat_cols:
+                try:
+                    g = df.groupby(c)[value_col].apply(lambda s: pd.to_numeric(s, errors="coerce").sum())
+                    if g.sum() > 0 and 1 < len(g) <= 60:
+                        scored.append((c, len(g)))
+                except Exception:
+                    continue
+            # Prefer dimension-like names first, then by cardinality
+            def rank_key(item):
+                c, n = item
+                pri = 0 if any(w in str(c).lower() for w in
+                       ("brand", "category", "style", "source", "product", "region",
+                        "segment", "type", "class", "group")) else 1
+                return (pri, -n if n <= 20 else n)
+            scored.sort(key=rank_key)
+            breakdown_cols = [c for c, _ in scored[:4]]
+
+        # Lay tables starting under the metrics block, left column c0=1
+        tbl_row = metrics_bottom + 2
+        total_value = float(numify(value_col).sum()) if value_col is not None else 0
+
+        for c in breakdown_cols:
+            g = df.groupby(c).agg(
+                _cnt=(value_col, "size"),
+                _val=(value_col, lambda s: pd.to_numeric(s, errors="coerce").sum()),
+            ).reset_index().rename(columns={c: "name"})
+            g = g.sort_values("_val", ascending=False).head(15)
+            title = f"By {c.replace('_',' ').title()}"
+            tbl_row = section_header(tbl_row, 1, 4, title.upper())
+            tbl_row = col_headers(tbl_row, 1, [c.replace('_', ' ').title(), "Count", f"{value_col.replace('_',' ').title()}", "% of Value"])
+            shown_val = 0
+            for _, rrow in g.iterrows():
+                pct = (rrow["_val"] / total_value * 100) if total_value else 0
+                shown_val += rrow["_val"]
+                r = tbl_row
+                data_row(r, 1, [str(rrow["name"]), int(rrow["_cnt"]), round(float(rrow["_val"]), 0)])
+                pcell = ws.cell(row=r, column=4, value=pct / 100)
+                pcell.number_format = "0.0%"; pcell.font = BODY; pcell.border = BORDER; pcell.alignment = R
+                tbl_row += 1
+            # Totals row
+            tot_pct = (shown_val / total_value) if total_value else 0
+            data_row(tbl_row, 1, ["Total", int(g["_cnt"].sum()), round(float(shown_val), 0)],
+                     bold=True, fill=TOTAL_FILL)
+            tcell = ws.cell(row=tbl_row, column=4, value=tot_pct)
+            tcell.number_format = "0.0%"; tcell.font = BODY_B; tcell.border = BORDER
+            tcell.alignment = R; tcell.fill = TOTAL_FILL
+            tbl_row += 2
+
+        # ── Recency / split cross-tab (grouped headers) when a split exists ──
+        # Find a low-cardinality column that splits into 2–3 buckets (or derive
+        # one from a days-since column), then show value/count per bucket per
+        # top category — the "Sold within 30 / Sold > 30" style block.
+        split_col = None
+        split_buckets = None
+        days_col = next((c for c in num_cols if any(w in str(c).lower()
+                        for w in ("days", "age", "recency", "last_sold", "dayssince"))), None)
+        if days_col is not None:
+            d = numify(days_col)
+            bucket = pd.Series(pd.cut(d, bins=[-1, 30, 10**9], labels=["Within 30 days", "Over 30 days"]))
+            if bucket.notna().sum() > 0:
+                split_col = "_recency_"
+                df = df.assign(**{split_col: bucket.values})
+                split_buckets = ["Within 30 days", "Over 30 days"]
+        if split_col is None:
+            for c in cat_cols:
+                nun = df[c].nunique(dropna=True)
+                if 2 <= nun <= 3:
+                    split_col = c
+                    split_buckets = [str(x) for x in df[c].dropna().unique()][:3]
+                    break
+
+        if split_col is not None and value_col is not None and breakdown_cols:
+            dim = breakdown_cols[0]
+            tbl_row = section_header(tbl_row, 1, 1 + 3 * len(split_buckets),
+                                     f"{dim.replace('_',' ').upper()} × {('RECENCY' if split_col=='_recency_' else split_col.replace('_',' ').upper())}")
+            # Grouped header band: dim | [bucket1 spanning 3] | [bucket2 spanning 3]
+            gh = tbl_row
+            ws.cell(row=gh, column=1, value=dim.replace('_', ' ').title()).font = HEAD_B
+            ws.cell(row=gh, column=1).fill = LIGHT
+            ws.cell(row=gh, column=1).border = BORDER
+            fills = [BAND2, BAND_GREY, BAND2]
+            for bi, b in enumerate(split_buckets):
+                c0 = 2 + bi * 3
+                ws.merge_cells(start_row=gh, start_column=c0, end_row=gh, end_column=c0 + 2)
+                gcell = ws.cell(row=gh, column=c0, value=str(b))
+                gcell.font = WHITE_B; gcell.fill = fills[bi % len(fills)]
+                gcell.alignment = C; gcell.border = BORDER
+                for k in range(1, 3):
+                    ws.cell(row=gh, column=c0 + k).fill = fills[bi % len(fills)]
+                    ws.cell(row=gh, column=c0 + k).border = BORDER
+            # Sub-header row
+            sh = gh + 1
+            ws.cell(row=sh, column=1, value="").border = BORDER
+            for bi in range(len(split_buckets)):
+                c0 = 2 + bi * 3
+                for k, h in enumerate([f"{value_col.replace('_',' ').title()}", "Count", (count_col.replace('_',' ').title() if count_col else "Volume")]):
+                    cc = ws.cell(row=sh, column=c0 + k, value=h)
+                    cc.font = HEAD_B; cc.fill = LIGHT; cc.border = BORDER; cc.alignment = R
+            # Body: top 12 of the dimension
+            top_dim = (df.groupby(dim)[value_col]
+                         .apply(lambda s: pd.to_numeric(s, errors="coerce").sum())
+                         .sort_values(ascending=False).head(12).index.tolist())
+            br = sh + 1
+            for name in top_dim:
+                sub = df[df[dim] == name]
+                ws.cell(row=br, column=1, value=str(name)).font = BODY
+                ws.cell(row=br, column=1).border = BORDER
+                ws.cell(row=br, column=1).alignment = L
+                for bi, b in enumerate(split_buckets):
+                    seg = sub[sub[split_col].astype(str) == str(b)]
+                    val = float(pd.to_numeric(seg[value_col], errors="coerce").sum())
+                    cnt = int(len(seg))
+                    vol = float(pd.to_numeric(seg[count_col], errors="coerce").sum()) if count_col else 0
+                    c0 = 2 + bi * 3
+                    for k, v in enumerate([round(val, 0), cnt, round(vol, 0)]):
+                        cc = ws.cell(row=br, column=c0 + k, value=v)
+                        cc.font = BODY; cc.border = BORDER; cc.alignment = R
+                        cc.number_format = "#,##0"
+                br += 1
+            tbl_row = br + 1
+
+        # ── Column widths ──
+        ws.column_dimensions["A"].width = 30
+        for col in ["B", "C", "D", "E", "F", "G", "H", "I", "J"]:
+            ws.column_dimensions[col].width = 15
+
+        # Make Dashboard the first sheet
+        wb.move_sheet("Dashboard", -(len(wb.sheetnames) - 1))
+        return ws
+
+    def _add_finance_excel(self, wb, finance, HEAD_FONT, HEAD_FILL, BODY_FONT,
+                           BRAND, BORDER, LEFT, RIGHT, _num, _autosize, _style_table):
+        from openpyxl.styles import Font, Alignment
+        fs = wb.create_sheet("Finance")
+        fs.sheet_view.showGridLines = False
+        title_font = Font(name="Calibri", size=12, bold=True, color=BRAND)
+        r = 1
+
+        def section(title):
+            nonlocal r
+            cell = fs.cell(row=r, column=1, value=title)
+            cell.font = title_font
+            r += 1
+
+        def table(header, rows, numeric_cols=None):
+            nonlocal r
+            if not rows:
+                return
+            header_row = r
+            for c, h in enumerate(header, 1):
+                fs.cell(row=header_row, column=c, value=h)
+            first = r + 1
+            for row in rows:
+                for c, v in enumerate(row, 1):
+                    nv = _num(v)
+                    fs.cell(row=first, column=c,
+                            value=nv if (nv is not None and str(v).strip() != "") else str(v))
+                first += 1
+            last = first - 1
+            _style_table(fs, header_row, header_row + 1, last, len(header),
+                         numeric_cols=numeric_cols or set())
+            r = last + 2
+
+        tax = finance.get("tax")
+        acct = finance.get("accounting")
+        fraud = finance.get("fraud")
+
+        if tax and not tax.get("error"):
+            section("Tax Analysis")
+            table(["Metric", "Value", "Benchmark"],
+                  [[m.get("label", ""), m.get("value", ""), m.get("benchmark", "")]
+                   for m in tax.get("metrics", [])])
+            findings = tax.get("findings", [])[:8]
+            if findings:
+                table(["Finding", "Detail"],
+                      [[f.get("title", ""), f.get("body", "")] for f in findings])
+
+        if acct and not acct.get("error"):
+            section(f"Accounting Analysis — Health Score: {acct.get('health_score','?')}/100")
+            table(["Metric", "Value"],
+                  [[m.get("label", ""), m.get("value", "")] for m in acct.get("metrics", [])])
+
+        if fraud and not fraud.get("error"):
+            section(f"Fraud Detection — Risk: {fraud.get('risk_level','?')} ({fraud.get('risk_score','?')}/100)")
+            findings = [f for f in fraud.get("findings", []) if f.get("severity") in ("critical", "warning")][:8]
+            if findings:
+                table(["Severity", "Finding", "Detail"],
+                      [[f.get("severity", "").upper(), f.get("title", ""), f.get("body", "")]
+                       for f in findings])
+
+        actions = finance.get("priority_actions", [])
+        if actions:
+            section("Priority Actions")
+            table(["Module", "Action", "Reason"],
+                  [[a.get("module", ""), a.get("action", ""), a.get("reason", "")] for a in actions])
+
+        _autosize(fs, max_w=70)
+
+
 document_service = DocumentExportService()
