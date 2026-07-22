@@ -29,6 +29,7 @@ AGENTS = {
     "data_quality": {
         "label": "Data Quality",
         "icon": "shield",
+        "provider": "gemini",
         "system": (
             "You are the Data Quality specialist. The user asked a SPECIFIC question — "
             "your job is to assess whether THIS data can answer THAT question, and flag "
@@ -49,6 +50,7 @@ AGENTS = {
     "trends": {
         "label": "Trends & Patterns",
         "icon": "trending",
+        "provider": "openai",
         "system": (
             "You are the Trends & Patterns specialist. Answer with SPECIFIC evidence "
             "relevant to the user's exact question. Cite real values, deltas, and names "
@@ -65,6 +67,7 @@ AGENTS = {
     "risk": {
         "label": "Risk & Anomaly",
         "icon": "alert",
+        "provider": "groq",
         "system": (
             "You are the Risk & Anomaly specialist. Surface the SPECIFIC risks and "
             "anomalies relevant to the user's exact question, named precisely: which row, "
@@ -233,7 +236,7 @@ class AgentService:
             ),
         }]
         try:
-            text, tokens, provider = await self._chat_with_system(spec["system"], messages, industry)
+            text, tokens, provider = await self._chat_with_system(spec["system"], messages, industry, spec.get("provider"))
             return {"agent": agent_key, "label": spec["label"], "icon": spec["icon"],
                     "ok": True, "findings": text, "provider": provider, "tokens": tokens}
         except Exception as e:
@@ -241,16 +244,32 @@ class AgentService:
             return {"agent": agent_key, "label": spec["label"], "icon": spec["icon"],
                     "ok": False, "findings": None, "error": str(e)[:200]}
 
-    async def _chat_with_system(self, agent_system: str, messages: list, industry: str):
-        """Call the LLM chat with the agent's persona prepended to the first message."""
-        from app.services.llm_service import llm_service
+    @staticmethod
+    def _resolve_provider(name):
+        """Map a provider name string to the LLMProvider enum, safely.
+        Unknown names (e.g. 'groq', which may not be an enum member) fall back
+        to openai as the requested start — chat() still fails over from there."""
         from app.models.schemas import LLMProvider
-        # Prepend the agent persona to the user message so it steers this call
+        try:
+            return LLMProvider(name)
+        except Exception:
+            try:
+                return LLMProvider.openai
+            except Exception:
+                return LLMProvider.anthropic
+
+    async def _chat_with_system(self, agent_system: str, messages: list, industry: str,
+                                preferred: str = None):
+        """Call the LLM chat with the agent's persona prepended to the first message.
+        `preferred` is the provider this specialist tries FIRST; if it fails, chat()
+        falls back down the full provider chain automatically."""
+        from app.services.llm_service import llm_service
+        provider = self._resolve_provider(preferred or "anthropic")
         framed = [{"role": "user", "content": agent_system + "\n\n" + messages[0]["content"]}]
-        text, tokens, provider = await llm_service.chat(
-            messages=framed, industry=industry, provider=LLMProvider.anthropic,
+        text, tokens, used = await llm_service.chat(
+            messages=framed, industry=industry, provider=provider,
             max_tokens=900, temperature=0.1)
-        return text, tokens, provider
+        return text, tokens, used
 
     async def analyze_fast(self, question: str, data: list, columns: list = None,
                            industry: str = "general", data_summary: str = None) -> dict:
