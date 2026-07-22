@@ -248,7 +248,7 @@ class AgentService:
         # Prepend the agent persona to the user message so it steers this call
         framed = [{"role": "user", "content": agent_system + "\n\n" + messages[0]["content"]}]
         text, tokens, provider = await llm_service.chat(
-            messages=framed, industry=industry, provider=LLMProvider.openai,
+            messages=framed, industry=industry, provider=LLMProvider.anthropic,
             max_tokens=900, temperature=0.1)
         return text, tokens, provider
 
@@ -310,7 +310,7 @@ class AgentService:
             from app.services.llm_service import llm_service
             from app.models.schemas import LLMProvider
             answer, tokens, provider = await llm_service.chat(
-                messages=msg, industry=industry, provider=LLMProvider.openai,
+                messages=msg, industry=industry, provider=LLMProvider.anthropic,
                 max_tokens=1200, temperature=0.05)
             return {"success": True, "answer": answer, "emphasis": emphasis,
                     "agents": [], "provider": provider, "tokens": tokens,
@@ -384,7 +384,7 @@ class AgentService:
             from app.services.llm_service import llm_service
             from app.models.schemas import LLMProvider
             answer, s_tokens, s_provider = await llm_service.chat(
-                messages=synth_msg, industry=industry, provider=LLMProvider.openai,
+                messages=synth_msg, industry=industry, provider=LLMProvider.anthropic,
                 max_tokens=1400, temperature=0.05)
         except Exception as e:
             # Fall back to the strongest single specialist if synthesis fails
