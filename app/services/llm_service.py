@@ -4,7 +4,7 @@ DataMind Agent — Elite LLM Service
 Injects pre-computed statistical evidence into every prompt.
 """
 from __future__ import annotations
-import logging
+import logging, os
 from typing import Optional
 from config.settings import settings
 from app.models.schemas import LLMProvider
@@ -140,7 +140,7 @@ class EliteLLMService:
         self,
         messages: list[dict],
         industry: str = "general",
-        provider: LLMProvider = LLMProvider.anthropic,
+        provider: LLMProvider = LLMProvider.openai,
         model: Optional[str] = None,
         max_tokens: int = 2500,
         temperature: float = 0.1,
@@ -298,12 +298,28 @@ class EliteLLMService:
         return augmented
 
     def _build_chain(self, preferred_provider, preferred_model):
+        # Keys are read from the environment with sensible aliases, so a var
+        # named GEMINI_API_KEY works as well as GOOGLE_API_KEY. This avoids a
+        # provider being silently dropped due to an env-var name mismatch.
+        def _key(*names):
+            for n in names:
+                v = os.getenv(n)
+                if v:
+                    return v
+            return None
+
+        gemini_model = os.getenv("GEMINI_MODEL") or "gemini-2.0-flash"
+        # Order: strongest AVAILABLE first. Gemini leads (fast, strong, key
+        # known good), then OpenAI, then Groq and Mistral as fast backstops.
+        # Anthropic/Cohere stay defined so they're used automatically if a key
+        # is ever added.
         all_providers = [
-            (LLMProvider.anthropic, self._anthropic, "Claude Sonnet 4",  "claude-sonnet-4-20250514", settings.ANTHROPIC_API_KEY),
-            (LLMProvider.openai,    self._openai,    "GPT-4o",           "gpt-4o",                   settings.OPENAI_API_KEY),
-            (LLMProvider.gemini,    self._gemini,    "Gemini 2.0 Flash", "gemini-2.0-flash",         settings.GOOGLE_API_KEY),
-            (LLMProvider.cohere,    self._cohere,    "Command R+",       "command-r-plus",            settings.COHERE_API_KEY),
-            (LLMProvider.mistral,   self._mistral,   "Mistral Large",    "mistral-large-latest",      settings.MISTRAL_API_KEY),
+            (LLMProvider.gemini,    self._gemini,    "Gemini 2.0 Flash", gemini_model,               _key("GOOGLE_API_KEY", "GEMINI_API_KEY")),
+            (LLMProvider.openai,    self._openai,    "GPT-4o",           "gpt-4o",                   _key("OPENAI_API_KEY")),
+            ("groq",                self._groq,      "Llama 3.3 70B",    "llama-3.3-70b-versatile",  _key("GROQ_API_KEY")),
+            (LLMProvider.mistral,   self._mistral,   "Mistral Large",    "mistral-large-latest",      _key("MISTRAL_API_KEY")),
+            (LLMProvider.anthropic, self._anthropic, "Claude Sonnet 4",  "claude-sonnet-4-20250514", _key("ANTHROPIC_API_KEY")),
+            (LLMProvider.cohere,    self._cohere,    "Command R+",       "command-r-plus",            _key("COHERE_API_KEY")),
         ]
         preferred = [
             (fn, name, preferred_model or mdl)
@@ -346,7 +362,7 @@ class EliteLLMService:
 
     async def _gemini(self, messages, system, model, max_tokens, temperature):
         import google.generativeai as genai
-        genai.configure(api_key=settings.GOOGLE_API_KEY)
+        genai.configure(api_key=(os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")))
         m = genai.GenerativeModel(
             model_name=model, system_instruction=system,
             generation_config={"max_output_tokens": max_tokens, "temperature": temperature},
@@ -369,6 +385,18 @@ class EliteLLMService:
             max_tokens=max_tokens, temperature=temperature,
         )
         return r.message.content[0].text, r.usage.tokens.input_tokens + r.usage.tokens.output_tokens
+
+    async def _groq(self, messages, system, model, max_tokens, temperature):
+        # Groq exposes an OpenAI-compatible endpoint.
+        from openai import AsyncOpenAI
+        client = AsyncOpenAI(api_key=os.getenv("GROQ_API_KEY"),
+                             base_url="https://api.groq.com/openai/v1")
+        r = await client.chat.completions.create(
+            model=model,
+            messages=[{"role": "system", "content": system}] + messages,
+            max_tokens=max_tokens, temperature=temperature,
+        )
+        return r.choices[0].message.content, (r.usage.total_tokens if r.usage else 0)
 
     async def _mistral(self, messages, system, model, max_tokens, temperature):
         from mistralai import Mistral
