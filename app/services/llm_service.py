@@ -12,7 +12,7 @@ from app.models.schemas import LLMProvider
 logger = logging.getLogger(__name__)
 
 INDUSTRY_CONTEXTS = {
-    "finance": """You are a CFO-level financial data analyst with 20 years experience.
+    "finance": """You are a CFO-level financial data analyst with 30 years experience.
 Your analysis must reference: ROI, EBITDA, NPV, cash conversion cycle, working capital ratios, liquidity, leverage.
 Always ground claims in specific numbers from the data. Flag FX exposure, fraud signals, covenant risks.""",
     "education": """You are a senior education data analyst and institutional researcher.
