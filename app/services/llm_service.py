@@ -179,109 +179,164 @@ class EliteLLMService:
             "PRE-COMPUTED STATISTICAL EVIDENCE — USE THESE EXACT NUMBERS IN YOUR RESPONSE:",
         ]
 
+        def g(d, *keys, default="?"):
+            """Safe nested get: g(d,'a','b') == d['a']['b'] or default."""
+            cur = d
+            for k in keys:
+                if isinstance(cur, dict) and k in cur and cur[k] is not None:
+                    cur = cur[k]
+                elif isinstance(cur, (list, tuple)) and isinstance(k, int) and -len(cur) <= k < len(cur):
+                    cur = cur[k]
+                else:
+                    return default
+            return cur
+
         # Distributions
-        if ctx.get("distributions"):
-            lines.append("\nDISTRIBUTIONS:")
-            for col, d in list(ctx["distributions"].items())[:6]:
-                lines.append(
-                    f"  {col}: n={d['count']}, mean={d['mean']}, median={d['median']}, "
-                    f"std={d['std']}, min={d['min']}, max={d['max']}, "
-                    f"missing={d['missing_pct']}%, shape={d['distribution_shape']}, cv={d.get('cv_pct','?')}%"
-                )
+        try:
+            if ctx.get("distributions"):
+                lines.append("\nDISTRIBUTIONS:")
+                for col, d in list(ctx["distributions"].items())[:6]:
+                    lines.append(
+                        f"  {col}: n={g(d,'count')}, mean={g(d,'mean')}, median={g(d,'median')}, "
+                        f"std={g(d,'std')}, min={g(d,'min')}, max={g(d,'max')}, "
+                        f"missing={g(d,'missing_pct')}%, shape={g(d,'distribution_shape')}, cv={g(d,'cv_pct')}%"
+                    )
+        except Exception as e:
+            logger.debug(f"distributions block skipped: {e}")
 
         # Anomalies
-        anomalies = [f for f in ctx.get("findings", []) if f["type"] == "anomaly"]
-        if anomalies:
-            lines.append("\nANOMALIES DETECTED (Z-score > 3σ):")
-            for f in anomalies[:5]:
-                ev = f["evidence"]
-                lines.append(
-                    f"  {f['column']}: {ev['anomaly_count']} anomalies ({ev['anomaly_pct']}% of records), "
-                    f"normal range [{ev['normal_range'][0]}, {ev['normal_range'][1]}], "
-                    f"anomalous values: {ev['anomaly_values'][:3]}, "
-                    f"impact on mean: +{ev['impact_on_mean_pct']}%, "
-                    f"max Z-score: {ev['z_score_max']}σ, "
-                    f"confidence: {round(f['confidence']*100)}%"
-                )
+        try:
+            anomalies = [f for f in ctx.get("findings", []) if f.get("type") == "anomaly"]
+            if anomalies:
+                lines.append("\nANOMALIES DETECTED (Z-score > 3\u03c3):")
+                for f in anomalies[:5]:
+                    ev = f.get("evidence", {}) or {}
+                    nr = ev.get("normal_range", ["?", "?"])
+                    lo, hi = (nr + ["?", "?"])[:2] if isinstance(nr, list) else ("?", "?")
+                    conf = f.get("confidence")
+                    conf_s = f"{round(conf*100)}%" if isinstance(conf, (int, float)) else "?"
+                    lines.append(
+                        f"  {f.get('column','?')}: {g(ev,'anomaly_count')} anomalies ({g(ev,'anomaly_pct')}% of records), "
+                        f"normal range [{lo}, {hi}], "
+                        f"anomalous values: {(ev.get('anomaly_values') or [])[:3]}, "
+                        f"impact on mean: +{g(ev,'impact_on_mean_pct')}%, "
+                        f"max Z-score: {g(ev,'z_score_max')}\u03c3, "
+                        f"confidence: {conf_s}"
+                    )
+        except Exception as e:
+            logger.debug(f"anomalies block skipped: {e}")
 
         # Trends
-        trends = [f for f in ctx.get("findings", []) if f["type"] == "trend"]
-        if trends:
-            lines.append("\nTRENDS (OLS linear regression):")
-            for f in trends[:4]:
-                ev = f["evidence"]
-                sig = f"p={ev.get('p_value','?')} ({'significant' if ev.get('statistically_significant') else 'not significant'})"
-                lines.append(
-                    f"  {f['column']}: {ev['total_change_pct']}% change over {ev['period_count']} periods, "
-                    f"R²={ev['r_squared']}, {sig}, "
-                    f"first={ev['first_value']}, last={ev['last_value']}, "
-                    f"slope={ev['slope_per_period']} per period"
-                )
+        try:
+            trends = [f for f in ctx.get("findings", []) if f.get("type") == "trend"]
+            if trends:
+                lines.append("\nTRENDS (OLS linear regression):")
+                for f in trends[:4]:
+                    ev = f.get("evidence", {}) or {}
+                    sig = f"p={ev.get('p_value','?')} ({'significant' if ev.get('statistically_significant') else 'not significant'})"
+                    lines.append(
+                        f"  {f.get('column','?')}: {g(ev,'total_change_pct')}% change over {g(ev,'period_count')} periods, "
+                        f"R\u00b2={g(ev,'r_squared')}, {sig}, "
+                        f"first={g(ev,'first_value')}, last={g(ev,'last_value')}, "
+                        f"slope={g(ev,'slope_per_period')} per period"
+                    )
+        except Exception as e:
+            logger.debug(f"trends block skipped: {e}")
 
-        # Correlations
-        if ctx.get("correlations"):
-            lines.append("\nCORRELATIONS (Pearson):")
-            for c in ctx["correlations"][:5]:
-                lines.append(
-                    f"  {c['col1']} vs {c['col2']}: r={c['correlation']} "
-                    f"({c['strength']} {c['direction']}), "
-                    f"p={c['p_value']} ({'significant' if c['significant'] else 'not significant'}), "
-                    f"n={c['n_observations']}. {c['interpretation']}"
-                )
+        # Correlations (key names vary across analysis versions — read defensively)
+        try:
+            if ctx.get("correlations"):
+                lines.append("\nCORRELATIONS (Pearson):")
+                for c in ctx["correlations"][:5]:
+                    pval = c.get("p_value",
+                                 c.get("p_value_bonferroni_corrected",
+                                       c.get("p_value_raw", "?")))
+                    is_sig = c.get("significant",
+                                   c.get("significant_after_correction", False))
+                    lines.append(
+                        f"  {c.get('col1','?')} vs {c.get('col2','?')}: r={c.get('correlation','?')} "
+                        f"({c.get('strength','?')} {c.get('direction','?')}), "
+                        f"p={pval} ({'significant' if is_sig else 'not significant'}), "
+                        f"n={c.get('n_observations', c.get('n','?'))}. {c.get('interpretation','')}"
+                    )
+        except Exception as e:
+            logger.debug(f"correlations block skipped: {e}")
 
         # Segmentation
-        if ctx.get("segmentation"):
-            lines.append("\nSEGMENTATION ANALYSIS:")
-            for seg_col, seg_data in list(ctx["segmentation"].items())[:3]:
-                lines.append(f"  By {seg_col} ({seg_data['unique_segments']} segments):")
-                for metric, segments in list(seg_data["metrics"].items())[:2]:
-                    lines.append(f"    {metric}:")
-                    for s in segments[:5]:
-                        diff = s["deviation_from_overall_pct"]
-                        sig = "(statistically different p<0.05)" if s["statistically_different"] else ""
-                        lines.append(
-                            f"      #{s['rank']} {s['segment']}: mean={s['mean']}, "
-                            f"n={s['count']} ({s['pct_of_total']}% of data), "
-                            f"deviation from avg: {diff:+.1f}% {sig}"
-                        )
+        try:
+            if ctx.get("segmentation"):
+                lines.append("\nSEGMENTATION ANALYSIS:")
+                for seg_col, seg_data in list(ctx["segmentation"].items())[:3]:
+                    if not isinstance(seg_data, dict):
+                        continue
+                    lines.append(f"  By {seg_col} ({seg_data.get('unique_segments','?')} segments):")
+                    for metric, segments in list((seg_data.get("metrics") or {}).items())[:2]:
+                        lines.append(f"    {metric}:")
+                        for sgm in (segments or [])[:5]:
+                            diff = sgm.get("deviation_from_overall_pct")
+                            diff_s = f"{diff:+.1f}%" if isinstance(diff, (int, float)) else "?"
+                            sig = "(statistically different p<0.05)" if sgm.get("statistically_different") else ""
+                            lines.append(
+                                f"      #{sgm.get('rank','?')} {sgm.get('segment','?')}: mean={sgm.get('mean','?')}, "
+                                f"n={sgm.get('count','?')} ({sgm.get('pct_of_total','?')}% of data), "
+                                f"deviation from avg: {diff_s} {sig}"
+                            )
+        except Exception as e:
+            logger.debug(f"segmentation block skipped: {e}")
 
         # Impact ranking
-        if ctx.get("impact_ranking"):
-            lines.append("\nIMPACT RANKING (pre-computed, use this order):")
-            for i, imp in enumerate(ctx["impact_ranking"][:5], 1):
-                lines.append(
-                    f"  #{i} {imp['column']}: impact_score={imp['score']}/10, "
-                    f"confidence={round(imp['confidence']*100)}%, "
-                    f"issue={imp['primary_issue']}, reason={imp['reason']}"
-                )
+        try:
+            if ctx.get("impact_ranking"):
+                lines.append("\nIMPACT RANKING (pre-computed, use this order):")
+                for i, imp in enumerate(ctx["impact_ranking"][:5], 1):
+                    conf = imp.get("confidence")
+                    conf_s = f"{round(conf*100)}%" if isinstance(conf, (int, float)) else "?"
+                    lines.append(
+                        f"  #{i} {imp.get('column','?')}: impact_score={imp.get('score','?')}/10, "
+                        f"confidence={conf_s}, "
+                        f"issue={imp.get('primary_issue','?')}, reason={imp.get('reason','?')}"
+                    )
+        except Exception as e:
+            logger.debug(f"impact ranking block skipped: {e}")
 
         # Uncertainty flags
-        if ctx.get("uncertainty"):
-            lines.append("\nUNCERTAINTY FLAGS (include in self-audit):")
-            for u in ctx["uncertainty"][:3]:
-                lines.append(
-                    f"  - {u['issue']}: {u['detail'][:150]} "
-                    f"(confidence adjustment: {u['confidence_adjustment']})"
-                )
+        try:
+            if ctx.get("uncertainty"):
+                lines.append("\nUNCERTAINTY FLAGS (include in self-audit):")
+                for u in ctx["uncertainty"][:3]:
+                    detail = str(u.get("detail", ""))[:150]
+                    lines.append(
+                        f"  - {u.get('issue','?')}: {detail} "
+                        f"(confidence adjustment: {u.get('confidence_adjustment','?')})"
+                    )
+        except Exception as e:
+            logger.debug(f"uncertainty block skipped: {e}")
 
         # Self-audit
-        if ctx.get("self_audit"):
-            for audit in ctx["self_audit"][:1]:
-                lines.append(f"\nPRE-COMPUTED ASSUMPTIONS:")
-                for a in audit.get("assumptions", [])[:4]:
-                    lines.append(f"  - {a}")
+        try:
+            if ctx.get("self_audit"):
+                for audit in ctx["self_audit"][:1]:
+                    lines.append(f"\nPRE-COMPUTED ASSUMPTIONS:")
+                    for a in (audit.get("assumptions") or [])[:4]:
+                        lines.append(f"  - {a}")
+        except Exception as e:
+            logger.debug(f"self-audit block skipped: {e}")
 
         # Data grounding summary
-        dg = ctx.get("data_grounding", {})
-        lines.append(f"\nDATA GROUNDING SUMMARY:")
-        lines.append(
-            f"  Total data points analysed: {dg.get('total_data_points', '?')} | "
-            f"Anomalies found: {dg.get('total_anomalies_found', 0)} | "
-            f"Correlations: {dg.get('total_correlations_found', 0)} | "
-            f"Segments: {dg.get('segments_analysed', 0)} | "
-            f"Confidence range: {round(dg.get('lowest_confidence_finding',0)*100)}% – "
-            f"{round(dg.get('highest_confidence_finding',0)*100)}%"
-        )
+        try:
+            dg = ctx.get("data_grounding", {}) or {}
+            lc = dg.get("lowest_confidence_finding", 0) or 0
+            hc = dg.get("highest_confidence_finding", 0) or 0
+            lines.append(f"\nDATA GROUNDING SUMMARY:")
+            lines.append(
+                f"  Total data points analysed: {dg.get('total_data_points', '?')} | "
+                f"Anomalies found: {dg.get('total_anomalies_found', 0)} | "
+                f"Correlations: {dg.get('total_correlations_found', 0)} | "
+                f"Segments: {dg.get('segments_analysed', 0)} | "
+                f"Confidence range: {round(lc*100)}% \u2013 {round(hc*100)}%"
+            )
+        except Exception as e:
+            logger.debug(f"data grounding block skipped: {e}")
 
         evidence_block = "\n".join(lines)
 
