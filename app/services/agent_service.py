@@ -77,6 +77,57 @@ AGENTS = {
             "by severity. 2-4 concrete findings."
         ),
     },
+    "forecasting": {
+        "label": "Forecasting",
+        "icon": "trending",
+        "provider": "openai",
+        "system": (
+            "You are the Forecasting specialist. Project where the key metrics are "
+            "heading based on the trend in the data. Cite the actual trajectory — "
+            "'revenue rose 120k\u2192149k\u2192171k over three periods, ~15%/period, implying "
+            "~197k next period if the trend holds'. State your assumption (linear, "
+            "seasonal, decelerating) and the main risk to the projection. Only forecast "
+            "columns that exist and actually have a time/sequence order; if the data has "
+            "no real time axis, say so instead of inventing a forecast. 2-3 findings."
+        ),
+    },
+    "segmentation": {
+        "label": "Segmentation",
+        "icon": "grid",
+        "provider": "gemini",
+        "system": (
+            "You are the Segmentation specialist. Break the data into the meaningful "
+            "groups that answer the question, and quantify each. 'Three tiers by value: "
+            "top 8 SKUs = 61% of value, next 40 = 30%, long tail 200+ = 9%'. Name the "
+            "actual categories/clusters and their real shares. Use existing columns to "
+            "group; do not invent segments the data can't support. 2-4 findings."
+        ),
+    },
+    "benchmarking": {
+        "label": "Benchmarking",
+        "icon": "target",
+        "provider": "openai",
+        "system": (
+            "You are the Benchmarking specialist. Compare the data's figures against "
+            "sensible industry norms or internal baselines for this industry, and say "
+            "whether each is above/below and by how much. 'Margin 17.5% vs ~25% industry "
+            "norm \u2014 7.5pts under'. Be explicit that norms are approximate unless a "
+            "benchmark is provided in the data. Flag the metrics most out of line. "
+            "2-3 findings."
+        ),
+    },
+    "recommendations": {
+        "label": "Recommendations",
+        "icon": "check",
+        "provider": "anthropic",
+        "system": (
+            "You are the Recommendations specialist. Give concrete, prioritised NEXT "
+            "ACTIONS grounded in the specific data \u2014 not generic advice. Each action "
+            "must reference the real finding that motivates it: 'Liquidate the 209 SKUs "
+            "unsold >30 days (GHS 124,605 tied up) \u2014 they are 0.8% of volume but block "
+            "working capital'. Rank by impact. 2-4 actions, each tied to a number."
+        ),
+    },
 }
 
 SYNTH_SYSTEM = (
@@ -223,7 +274,56 @@ class AgentService:
         lines.append(json.dumps(data[:20], default=str)[:3000])
         return "\n".join(lines)
 
-    async def _run_agent(self, agent_key: str, question: str, data_summary: str, industry: str) -> dict:
+    # Difficulty tier -> which provider to prefer. Each still fails over.
+    TIER_PROVIDER = {"hard": "anthropic", "medium": "openai", "easy": "gemini"}
+
+    async def _route(self, question: str, data_summary: str, industry: str) -> dict:
+        """
+        One fast, cheap LLM call that decides which specialists to run and at
+        what difficulty tier. Returns {"agents": {key: tier, ...}}.
+        Never raises: on any failure returns {} so analyze() uses the static panel.
+        """
+        roster = ", ".join(AGENTS.keys())
+        router_prompt = (
+            "You are a routing controller for a data-analysis panel. Given a user "
+            "question and the dataset's columns, choose which specialist agents should "
+            "run and how hard each one's job is.\n\n"
+            f"AVAILABLE AGENTS: {roster}\n"
+            "TIERS: hard (needs the strongest model), medium, easy.\n\n"
+            f"QUESTION: \"{question}\"\n"
+            f"DATA (columns + summary):\n{data_summary[:1200]}\n\n"
+            "Rules: always include data_quality. Include the 2-4 agents most relevant "
+            "to THIS question (e.g. forecasting only if there's a time/sequence axis; "
+            "segmentation for grouping questions; benchmarking for comparison questions; "
+            "recommendations if they ask what to do). Set tier by how much reasoning the "
+            "question demands. Respond with ONLY a JSON object, no prose:\n"
+            '{"agents": {"data_quality": "easy", "trends": "medium", ...}}'
+        )
+        try:
+            from app.services.llm_service import llm_service
+            from app.models.schemas import LLMProvider
+            import json, re
+            # Route on a fast/cheap model; fall over if it's down.
+            provider = self._resolve_provider("gemini")
+            text, _, _ = await llm_service.chat(
+                messages=[{"role": "user", "content": router_prompt}],
+                industry=industry, provider=provider,
+                max_tokens=250, temperature=0.0)
+            m = re.search(r"\{.*\}", text, re.DOTALL)
+            if not m:
+                return {}
+            plan = json.loads(m.group(0))
+            agents = plan.get("agents", {})
+            # Keep only valid agent keys; drop anything hallucinated.
+            agents = {k: v for k, v in agents.items() if k in AGENTS}
+            if "data_quality" not in agents:
+                agents["data_quality"] = "medium"
+            return {"agents": agents} if agents else {}
+        except Exception as e:
+            logger.warning(f"Router failed, using static panel: {e}")
+            return {}
+
+    async def _run_agent(self, agent_key: str, question: str, data_summary: str, industry: str, provider_override: str = None) -> dict:
         """Run a single specialist. Never raises — returns a status dict."""
         spec = AGENTS[agent_key]
         messages = [{
@@ -236,7 +336,8 @@ class AgentService:
             ),
         }]
         try:
-            text, tokens, provider = await self._chat_with_system(spec["system"], messages, industry, spec.get("provider"))
+            preferred = provider_override or spec.get("provider")
+            text, tokens, provider = await self._chat_with_system(spec["system"], messages, industry, preferred)
             return {"agent": agent_key, "label": spec["label"], "icon": spec["icon"],
                     "ok": True, "findings": text, "provider": provider, "tokens": tokens}
         except Exception as e:
@@ -357,10 +458,20 @@ class AgentService:
             data_summary = self._data_summary(data, columns)
         emphasis = classify_question(question)
 
-        # 1. Run the three specialists in parallel
-        specialist_keys = list(AGENTS.keys())
+        # 1. Route: decide which specialists run and at what tier (cheap call).
+        #    On any router failure we fall back to the static core panel.
+        plan = await self._route(question, data_summary, industry)
+        if plan.get("agents"):
+            routed = plan["agents"]  # {agent_key: tier}
+        else:
+            routed = {"data_quality": "medium", "trends": "medium", "risk": "medium"}
+        specialist_keys = list(routed.keys())
+
+        # Map each agent's tier to a preferred provider (still fails over).
         results = await asyncio.gather(*[
-            self._run_agent(k, question, data_summary, industry) for k in specialist_keys
+            self._run_agent(k, question, data_summary, industry,
+                            self.TIER_PROVIDER.get(routed.get(k, "medium"), "openai"))
+            for k in specialist_keys
         ])
         agents_out = {r["agent"]: r for r in results}
         succeeded = [r for r in results if r["ok"]]
