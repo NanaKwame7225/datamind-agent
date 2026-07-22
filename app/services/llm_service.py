@@ -313,12 +313,16 @@ class EliteLLMService:
         # known good), then OpenAI, then Groq and Mistral as fast backstops.
         # Anthropic/Cohere stay defined so they're used automatically if a key
         # is ever added.
+        # Order: strongest AVAILABLE first. Claude leads (best analytical
+        # quality, key present), then OpenAI, Gemini, and Groq/Mistral as fast
+        # backstops. A provider with no key is filtered out below, so a missing
+        # key costs no time.
         all_providers = [
-            (LLMProvider.gemini,    self._gemini,    "Gemini 2.0 Flash", gemini_model,               _key("GOOGLE_API_KEY", "GEMINI_API_KEY")),
+            (LLMProvider.anthropic, self._anthropic, "Claude Sonnet 4",  "claude-sonnet-4-20250514", _key("ANTHROPIC_API_KEY")),
             (LLMProvider.openai,    self._openai,    "GPT-4o",           "gpt-4o",                   _key("OPENAI_API_KEY")),
+            (LLMProvider.gemini,    self._gemini,    "Gemini 2.0 Flash", gemini_model,               _key("GOOGLE_API_KEY", "GEMINI_API_KEY")),
             ("groq",                self._groq,      "Llama 3.3 70B",    "llama-3.3-70b-versatile",  _key("GROQ_API_KEY")),
             (LLMProvider.mistral,   self._mistral,   "Mistral Large",    "mistral-large-latest",      _key("MISTRAL_API_KEY")),
-            (LLMProvider.anthropic, self._anthropic, "Claude Sonnet 4",  "claude-sonnet-4-20250514", _key("ANTHROPIC_API_KEY")),
             (LLMProvider.cohere,    self._cohere,    "Command R+",       "command-r-plus",            _key("COHERE_API_KEY")),
         ]
         preferred = [
