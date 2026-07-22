@@ -16,6 +16,8 @@ logger = logging.getLogger(__name__)
 MIN_POINTS_TREND = 4
 MIN_POINTS_HOLT = 6
 MIN_POINTS_SEASONAL = 12
+# Beyond this, model fitting gets slow with no accuracy gain — downsample first.
+MAX_FIT_POINTS = 400
 
 
 class ForecastService:
@@ -79,13 +81,28 @@ class ForecastService:
         if n < MIN_POINTS_TREND:
             raise ValueError(f"Only {n} valid points")
 
+        # CRITICAL: cap the series length before fitting. Holt-Winters with
+        # optimized=True over thousands of points can take minutes (effectively
+        # hanging the request) with no accuracy benefit. Evenly downsample to a
+        # readable, fast length while preserving the overall shape and the most
+        # recent point (which the forecast extends from).
+        if n > MAX_FIT_POINTS:
+            idx = np.linspace(0, n - 1, MAX_FIT_POINTS).astype(int)
+            idx = np.unique(idx)
+            if idx[-1] != n - 1:
+                idx = np.append(idx, n - 1)
+            y = y[idx]
+            n = len(y)
+
         method, preds, lower, upper, r2, resid_std = None, None, None, None, None, None
 
         # Holt-Winters if we have enough points and it converges
         if n >= MIN_POINTS_HOLT:
             try:
                 from statsmodels.tsa.holtwinters import ExponentialSmoothing
-                seasonal = "add" if n >= MIN_POINTS_SEASONAL else None
+                # Only attempt seasonality when there are enough points for it
+                # to be meaningful AND the series is a manageable length.
+                seasonal = "add" if (MIN_POINTS_SEASONAL <= n <= MAX_FIT_POINTS) else None
                 sp = 12 if (seasonal and n >= 24) else (4 if seasonal else None)
                 model = ExponentialSmoothing(
                     y, trend="add", seasonal=seasonal, seasonal_periods=sp,
@@ -210,6 +227,12 @@ class ForecastService:
 
         x = sub[driver].values.astype(float)
         y = sub[target].values.astype(float)
+        # Subsample very large pairings — linregress is O(n) but there's no need
+        # to push 16k+ points through, and it keeps the response fast.
+        if len(x) > 5000:
+            import numpy as _np
+            idx = _np.linspace(0, len(x) - 1, 5000).astype(int)
+            x, y = x[idx], y[idx]
         slope, intercept, r, p, se = stats.linregress(x, y)
 
         current_x = float(x.mean())
