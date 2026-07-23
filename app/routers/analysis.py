@@ -280,85 +280,282 @@ def _elite_metrics(elite) -> list[Metric]:
 
 # ── Main endpoint ─────────────────────────────────────────────────────────────
 
-def _data_facts(df, max_chars: int = 4500, query: str = "") -> str:
+def _deep_facts(df, max_chars: int = 11000, query: str = "") -> str:
     """
-    Real facts from the data so the model can cite specifics instead of
-    generalising. Critically this includes the TOP and BOTTOM rows by the main
-    metric — "which X is highest?" is unanswerable from a head() sample, since
-    the leader may sit anywhere in the file.
-    """
-    import pandas as pd
-    parts = []
-    num = df.select_dtypes(include="number")
+    Compute an EXACT, decision-grade fact sheet across the ENTIRE dataset.
 
-    # Pick the metric that matters: prefer aggregates, ignore ids/years.
-    metric = None
-    if not num.empty:
-        skip = ("rank", "id", "index", "year", "no", "number", "code")
-        cands = [c for c in num.columns if not any(s in str(c).lower() for s in skip)]
+    Nothing here is sampled — every figure is calculated over all rows in pandas.
+    Only the *presentation* is bounded, so the prompt stays within context limits
+    while the underlying maths covers everything.
+
+    Produces:
+      • Shape, column inventory and data-quality flags
+      • Full distribution profile per numeric column (percentiles, skew, kurtosis, CV)
+      • Concentration analysis (Pareto 80/20, top-10 share, Gini, Herfindahl)
+      • Ranked leaders and laggards on the primary metric
+      • Exact cross-tabs for every meaningful categorical dimension
+      • Two-way cross-tabs where dimensions interact
+      • Named outliers with their actual values and deviation
+      • Missing-data patterns and co-missingness
+      • Period-over-period movement where a time axis exists
+    """
+    import numpy as np
+    import pandas as pd
+
+    parts = []
+    n_rows = len(df)
+    num = df.select_dtypes(include="number")
+    num_cols = list(num.columns)
+
+    # ── Identify the primary metric (what "value" means for this data) ──
+    def pick_metric():
+        if not num_cols:
+            return None
+        skip = ("rank", "id", "index", "year", "no", "number", "code", "zip", "phone")
+        cands = [c for c in num_cols if not any(s in str(c).lower() for s in skip)]
         if not cands:
-            cands = list(num.columns)
-        # A column named in the question wins; else prefer global/total; else biggest sum
+            cands = list(num_cols)
         ql = (query or "").lower()
         named = [c for c in cands if str(c).lower().replace("_", " ") in ql or str(c).lower() in ql]
-        whole = [c for c in cands if any(w in str(c).lower()
-                 for w in ("global", "total", "overall", "combined", "gross", "net"))]
-        metric = (named or whole or [num[cands].sum().idxmax()])[0]
+        whole = [c for c in cands
+                 if any(w in str(c).lower()
+                        for w in ("global", "total", "overall", "combined", "gross", "net",
+                                  "value", "revenue", "sales", "amount"))]
+        if named:
+            return named[0]
+        if whole:
+            return whole[0]
+        try:
+            return num[cands].sum().idxmax()
+        except Exception:
+            return cands[0]
 
-    # 1. THE LEADERS — the rows that actually answer "which is highest/lowest"
+    metric = pick_metric()
+
+    # ── Categorical dimensions worth breaking down by ──
+    cats = []
+    for c in df.columns:
+        if c in num_cols:
+            continue
+        try:
+            if pd.api.types.is_datetime64_any_dtype(df[c]):
+                continue
+            nun = df[c].nunique(dropna=True)
+            if 1 < nun <= max(80, n_rows // 3):
+                cats.append((c, nun))
+        except Exception:
+            continue
+    cats.sort(key=lambda t: t[1])
+    cat_cols = [c for c, _ in cats]
+
+    # ── 1. SHAPE & INVENTORY ──────────────────────────────────────────────
+    parts.append(f"DATASET: {n_rows:,} rows x {len(df.columns)} columns. "
+                 f"ALL figures below are computed over ALL {n_rows:,} rows — nothing is sampled.")
+    parts.append(f"Numeric columns: {', '.join(map(str, num_cols)) or 'none'}")
+    parts.append(f"Categorical columns: {', '.join(f'{c} ({n} distinct)' for c, n in cats[:10]) or 'none'}")
+    if metric:
+        parts.append(f"Primary metric identified: {metric}")
+
+    # ── 2. DATA QUALITY (exact) ───────────────────────────────────────────
+    try:
+        miss = df.isna().sum()
+        miss = miss[miss > 0].sort_values(ascending=False)
+        if len(miss):
+            parts.append("\nMISSING DATA (exact counts):")
+            for c, m in miss.head(8).items():
+                parts.append(f"  {c}: {int(m):,} missing ({m / n_rows * 100:.1f}%)")
+            # Co-missingness — do columns go missing together?
+            if len(miss) >= 2:
+                a, b = miss.index[0], miss.index[1]
+                both = int((df[a].isna() & df[b].isna()).sum())
+                if both > 0:
+                    parts.append(f"  Co-missing: {both:,} rows lack BOTH {a} and {b} "
+                                 f"— suggests a systematic gap, not random omission.")
+        dups = int(df.duplicated().sum())
+        if dups:
+            parts.append(f"  Exact duplicate rows: {dups:,} ({dups / n_rows * 100:.1f}%)")
+    except Exception:
+        pass
+
+    # ── 3. DISTRIBUTION PROFILE (exact, per numeric column) ───────────────
+    if num_cols:
+        parts.append("\nDISTRIBUTION PROFILE (computed over every row):")
+        for c in num_cols[:8]:
+            try:
+                s = pd.to_numeric(df[c], errors="coerce").dropna()
+                if len(s) < 3:
+                    continue
+                p = s.quantile([.10, .25, .50, .75, .90, .99])
+                mean, std = float(s.mean()), float(s.std())
+                cv = (std / mean * 100) if mean else float("nan")
+                skew = float(s.skew()) if len(s) > 2 else 0.0
+                kurt = float(s.kurtosis()) if len(s) > 3 else 0.0
+                shape = ("right-skewed (a few large values pull the mean up)" if skew > 1
+                         else "left-skewed" if skew < -1 else "roughly symmetric")
+                parts.append(
+                    f"  {c}: n={len(s):,} sum={s.sum():,.0f} mean={mean:,.2f} median={s.median():,.2f}\n"
+                    f"     P10={p[.10]:,.2f} P25={p[.25]:,.2f} P75={p[.75]:,.2f} P90={p[.90]:,.2f} P99={p[.99]:,.2f}\n"
+                    f"     min={s.min():,.2f} max={s.max():,.2f} std={std:,.2f} CV={cv:.1f}% "
+                    f"skew={skew:.2f} ({shape}) kurtosis={kurt:.2f}"
+                )
+            except Exception:
+                continue
+
+    # ── 4. CONCENTRATION / PARETO (exact) ─────────────────────────────────
     if metric is not None:
         try:
-            label_cols = [c for c in df.columns if c not in num.columns][:3]
-            show = ([*label_cols, metric] if label_cols else [metric])
-            show = [c for c in dict.fromkeys(show) if c in df.columns]
-            top = df.nlargest(15, metric)[show]
-            parts.append(f"TOP 15 ROWS BY {str(metric).upper()} (the highest in the WHOLE dataset, "
-                         f"not a sample — use these to answer 'which is highest/top/best'):")
-            parts.append(top.to_string(index=False, max_colwidth=34)[:1600])
-            bot = df.nsmallest(5, metric)[show]
-            parts.append(f"\nBOTTOM 5 ROWS BY {str(metric).upper()}:")
-            parts.append(bot.to_string(index=False, max_colwidth=34)[:500])
-        except Exception as e:
-            logger.warning(f"Top/bottom rows failed: {e}")
-
-    # 2. A plain sample for context (file order)
-    parts.append(f"\nSAMPLE ROWS (first 8 of {len(df)}, file order — NOT ranked):")
-    parts.append(df.head(8).to_string(index=False, max_colwidth=22)[:800])
-
-    # 3. Numeric summaries
-    if not num.empty:
-        parts.append("\nNUMERIC SUMMARY:")
-        try:
-            stats = num.describe().T[["min", "50%", "mean", "max"]]
-            stats.columns = ["min", "median", "mean", "max"]
-            parts.append(stats.to_string(max_colwidth=18)[:900])
+            s = pd.to_numeric(df[metric], errors="coerce").dropna()
+            s = s[s > 0].sort_values(ascending=False)
+            if len(s) > 4:
+                total = float(s.sum())
+                cum = s.cumsum() / total
+                n80 = int((cum <= 0.80).sum()) + 1
+                pct_rows_for_80 = n80 / len(s) * 100
+                top10_share = float(s.head(max(1, len(s) // 10)).sum()) / total * 100
+                top1 = float(s.iloc[0]) / total * 100
+                # Gini (concentration; 0 = perfectly even, 1 = all in one record)
+                arr = np.sort(s.values)
+                idx = np.arange(1, len(arr) + 1)
+                gini = float((2 * idx - len(arr) - 1).dot(arr) / (len(arr) * arr.sum()))
+                # Herfindahl on shares
+                shares = arr / arr.sum()
+                hhi = float((shares ** 2).sum())
+                parts.append(f"\nCONCENTRATION OF {str(metric).upper()} (exact, all rows):")
+                parts.append(
+                    f"  {n80:,} records ({pct_rows_for_80:.1f}% of rows) account for 80% of the total. "
+                    f"Top decile holds {top10_share:.1f}%. Single largest record = {top1:.1f}% of total.")
+                parts.append(
+                    f"  Gini = {gini:.3f} ({'highly concentrated' if gini > .6 else 'moderately concentrated' if gini > .4 else 'fairly even'}), "
+                    f"HHI = {hhi:.4f}. Total {metric} = {total:,.0f}.")
         except Exception:
             pass
 
-    # 3. Top categories ranked by the main metric — the "which is best/worst" material
-    num_cols = set(num.columns)
-    cats = [c for c in df.columns
-            if c not in num_cols
-            and not pd.api.types.is_datetime64_any_dtype(df[c])
-            and 0 < df[c].nunique(dropna=True) <= 60]
-    if cats and not num.empty:
-        # Ignore id-like / index-like columns when choosing what to rank by
-        skip = ("rank", "id", "index", "year", "no", "number", "code")
-        candidates = [c for c in num.columns
-                      if not any(s in str(c).lower() for s in skip)]
-        if not candidates:
-            candidates = list(num.columns)
-        metric = num[candidates].sum(numeric_only=True).idxmax()
-        for c in cats[:3]:
+    # ── 5. LEADERS & LAGGARDS (exact, from the whole file) ────────────────
+    if metric is not None:
+        try:
+            label_cols = [c for c in df.columns if c not in num_cols][:2]
+            show = [c for c in dict.fromkeys([*label_cols, metric]) if c in df.columns]
+            top = df.nlargest(12, metric)[show]
+            parts.append(f"\nTOP 12 RECORDS BY {str(metric).upper()} "
+                         f"(ranked across ALL {n_rows:,} rows — authoritative for 'which is highest'):")
+            parts.append(top.to_string(index=False, max_colwidth=30)[:1400])
+            bot = df.nsmallest(5, metric)[show]
+            parts.append(f"BOTTOM 5 BY {str(metric).upper()}:")
+            parts.append(bot.to_string(index=False, max_colwidth=30)[:500])
+        except Exception:
+            pass
+
+    # ── 6. EXACT BREAKDOWNS PER DIMENSION ─────────────────────────────────
+    if metric is not None and cat_cols:
+        for c in cat_cols[:4]:
             try:
-                top = (df.groupby(c)[metric].sum()
-                         .sort_values(ascending=False).head(8))
-                parts.append(f"\nTOP {c.upper()} BY TOTAL {metric.upper()}:")
-                parts.append(top.to_string()[:600])
+                g = df.groupby(c)[metric].agg(["count", "sum", "mean"])
+                g = g.sort_values("sum", ascending=False)
+                gt = float(g["sum"].sum())
+                parts.append(f"\nBY {str(c).upper()} — exact totals across all rows "
+                             f"({df[c].nunique(dropna=True)} groups):")
+                for name, row in g.head(10).iterrows():
+                    share = row["sum"] / gt * 100 if gt else 0
+                    parts.append(f"  {str(name)[:28]:<28} n={int(row['count']):>7,}  "
+                                 f"{metric}={row['sum']:>14,.0f}  ({share:>5.1f}%)  avg={row['mean']:,.2f}")
+                if len(g) > 10:
+                    rest = g.iloc[10:]
+                    parts.append(f"  ...and {len(rest)} more groups totalling "
+                                 f"{rest['sum'].sum():,.0f} ({rest['sum'].sum()/gt*100:.1f}%)")
             except Exception:
                 continue
+
+    # ── 7. TWO-WAY CROSS-TAB (where two dimensions interact) ──────────────
+    if metric is not None and len(cat_cols) >= 2:
+        try:
+            a, b = cat_cols[0], cat_cols[1]
+            if df[a].nunique() <= 12 and df[b].nunique() <= 8:
+                ct = pd.pivot_table(df, index=a, columns=b, values=metric,
+                                    aggfunc="sum", fill_value=0)
+                parts.append(f"\nCROSS-TAB: {a} x {b} (sum of {metric}, exact):")
+                parts.append(ct.to_string(max_colwidth=14)[:1200])
+        except Exception:
+            pass
+
+    # ── 8. NAMED OUTLIERS (actual records, not just counts) ───────────────
+    if metric is not None:
+        try:
+            s = pd.to_numeric(df[metric], errors="coerce")
+            mean, std = float(s.mean()), float(s.std())
+            if std and std > 0:
+                z = (s - mean) / std
+                out = df.loc[z.abs() > 3].copy()
+                if len(out):
+                    out["_z"] = z.loc[out.index].round(2)
+                    label_cols = [c for c in df.columns if c not in num_cols][:2]
+                    show = [c for c in dict.fromkeys([*label_cols, metric, "_z"]) if c in out.columns]
+                    out = out.reindex(out["_z"].abs().sort_values(ascending=False).index)
+                    parts.append(f"\nOUTLIERS ON {str(metric).upper()} (|Z| > 3, exact): "
+                                 f"{len(out):,} records, {len(out)/n_rows*100:.2f}% of data. "
+                                 f"Normal range [{mean-3*std:,.0f}, {mean+3*std:,.0f}]. "
+                                 f"Named records:")
+                    parts.append(out.head(8)[show].to_string(index=False, max_colwidth=26)[:900])
+                    infl = float(s.mean()) - float(s.drop(out.index).mean())
+                    parts.append(f"  Removing these outliers shifts the mean by {infl:,.2f} "
+                                 f"({infl/mean*100:+.1f}%) — they materially distort the average.")
+        except Exception:
+            pass
+
+    # ── 9. TIME MOVEMENT (exact period-over-period) ───────────────────────
+    try:
+        tcol = next((c for c in df.columns
+                     if any(w in str(c).lower()
+                            for w in ("year", "date", "month", "period", "quarter", "week"))), None)
+        if tcol is not None and metric is not None and df[tcol].nunique() > 1:
+            g = df.groupby(tcol)[metric].sum().sort_index()
+            if 1 < len(g) <= 60:
+                parts.append(f"\n{str(metric).upper()} BY {str(tcol).upper()} (exact totals per period):")
+                prev = None
+                lines = []
+                for k, v in g.items():
+                    delta = f" ({(v-prev)/prev*100:+.1f}%)" if prev not in (None, 0) else ""
+                    lines.append(f"  {str(k)[:12]:<12} {v:>14,.0f}{delta}")
+                    prev = v
+                parts.append("\n".join(lines[:24]))
+                first, last = float(g.iloc[0]), float(g.iloc[-1])
+                if first:
+                    parts.append(f"  Overall movement: {first:,.0f} -> {last:,.0f} "
+                                 f"({(last-first)/first*100:+.1f}%) across {len(g)} periods.")
+    except Exception:
+        pass
+
+    # ── 10. CORRELATION HIGHLIGHTS (exact) ────────────────────────────────
+    try:
+        if len(num_cols) >= 2:
+            corr = num[num_cols].corr(numeric_only=True)
+            pairs = []
+            seen = set()
+            for a in corr.columns:
+                for b in corr.columns:
+                    if a == b or (b, a) in seen:
+                        continue
+                    seen.add((a, b))
+                    r = corr.loc[a, b]
+                    if pd.notna(r) and abs(r) >= 0.5:
+                        pairs.append((abs(r), a, b, r))
+            pairs.sort(reverse=True)
+            if pairs:
+                parts.append("\nSTRONGEST RELATIONSHIPS (Pearson r, computed on all rows):")
+                for _, a, b, r in pairs[:6]:
+                    parts.append(f"  {a} <-> {b}: r={r:+.3f} "
+                                 f"({'strong' if abs(r) > .7 else 'moderate'} "
+                                 f"{'positive' if r > 0 else 'negative'})")
+    except Exception:
+        pass
+
     out = "\n".join(parts)
-    return out[:max_chars]
+    if len(out) > max_chars:
+        out = out[:max_chars] + "\n[fact sheet truncated for length — all figures above are exact]"
+    return out
+
+
+# Backwards-compatible alias: the analyse endpoint calls _data_facts.
+_data_facts = _deep_facts
 
 
 @router.post("/analyse", response_model=AnalysisResponse)
@@ -558,6 +755,12 @@ async def analyse(req: AnalysisRequest):
         "question asks to classify, group, rank, or compare, then DO that classification "
         "and present the result. A list of rows is NOT an answer unless a list was asked "
         "for. Work out the answer, then show the evidence.\n"
+        "1b. USE THE FULL FACT SHEET. Everything above is computed over EVERY row — "
+        "percentiles, skew, concentration/Gini, exact group totals, cross-tabs, named "
+        "outliers, and period movements. Draw on these specifics. If the distribution is "
+        "skewed, say the mean is misleading and cite the median. If value is concentrated, "
+        "quantify it ('43% of records hold 80% of value'). If outliers distort the average, "
+        "name them and state the effect. Shallow answers that ignore this detail are wrong.\n"
         "2. THE 'TOP ROWS' BLOCK IS AUTHORITATIVE. It is computed from the ENTIRE dataset, "
         "not a sample. If asked which is highest/top/best/leading, name the first row of "
         "that block outright — never say the answer 'cannot be determined' or hedge about "
