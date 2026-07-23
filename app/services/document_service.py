@@ -840,6 +840,7 @@ class DocumentExportService:
 
         # ══ SHEET 4: DATA ═════════════════════════════════════════════════════
         # Prefer the full dataset the frontend may send; fall back to the preview.
+        data_map = None
         data_rows = result.get("data")
         if not isinstance(data_rows, list) or not data_rows:
             data_rows = result.get("raw_data_preview") or []
@@ -848,14 +849,14 @@ class DocumentExportService:
             ds.sheet_view.showGridLines = False
             # Union of keys, preserving first-seen order
             cols = []
-            for row in data_rows[:2000]:
+            for row in data_rows[:5000]:
                 for k in row.keys():
                     if k not in cols:
                         cols.append(k)
             for c, k in enumerate(cols, 1):
                 ds.cell(row=1, column=c, value=str(k).replace("_", " "))
             numeric_cols = set()
-            MAX_ROWS = 5000
+            MAX_ROWS = 150000
             for i, row in enumerate(data_rows[:MAX_ROWS], start=2):
                 for c, k in enumerate(cols, 1):
                     v = row.get(k)
@@ -882,7 +883,25 @@ class DocumentExportService:
                         break
                 if saw_val and all_num:
                     clean_numeric.add(c)
-            _style_table(ds, 1, 2, last, len(cols), numeric_cols=clean_numeric)
+            # Record where each field lives so the Dashboard can write live
+            # formulas that point back at this sheet.
+            data_map = {"cols": list(cols), "first_row": 2, "last_row": last,
+                        "total_rows": len(data_rows), "written_rows": min(len(data_rows), MAX_ROWS),
+                        "truncated": len(data_rows) > MAX_ROWS}
+            # Style the HEADER only. Styling every data cell (border+font+fill)
+            # is what makes large workbooks slow to write and heavy to open, so
+            # for the data body we write values only and rely on the frozen
+            # header + column widths for readability.
+            for c in range(1, len(cols) + 1):
+                hc = ds.cell(row=1, column=c)
+                hc.font = HEAD_FONT
+                hc.fill = HEAD_FILL
+                hc.alignment = LEFT
+                hc.border = BORDER
+            ds.freeze_panes = "A2"
+            ds.auto_filter.ref = f"A1:{get_column_letter(len(cols))}{last}"
+            for c in clean_numeric:
+                ds.cell(row=2, column=c).number_format = "#,##0.##"
             _autosize(ds, max_w=40)
             if len(data_rows) > MAX_ROWS:
                 note = ds.cell(row=last + 2, column=1,
@@ -890,10 +909,19 @@ class DocumentExportService:
                 note.font = ITAL
 
         # ══ ANALYTICAL DASHBOARD (first sheet) ══════════════════════════════
+        dash_info = None
         try:
-            self._build_dashboard_sheet(wb, result, data_rows if isinstance(data_rows, list) else [])
+            dash_info = self._build_dashboard_sheet(wb, result,
+                                                    data_rows if isinstance(data_rows, list) else [],
+                                                    data_map=data_map)
         except Exception as e:
             logger.warning(f"Dashboard sheet skipped: {e}")
+        try:
+            self._add_methodology_sheet(wb, result, data_map,
+                                        (dash_info or {}).get("value_col"),
+                                        (dash_info or {}).get("breakdown_cols"))
+        except Exception as e:
+            logger.warning(f"Methodology sheet skipped: {e}")
 
         # ══ SHEET 5: FINANCE ══════════════════════════════════════════════════
         if finance:
@@ -960,7 +988,7 @@ class DocumentExportService:
     # a metrics block, several "Top-N by value" breakdown tables, and a recency
     # cross-tab with grouped headers — all computed from the actual data.
 
-    def _build_dashboard_sheet(self, wb, result: dict, data_rows: list):
+    def _build_dashboard_sheet(self, wb, result: dict, data_rows: list, data_map: dict = None):
         from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
         from openpyxl.utils import get_column_letter
         try:
@@ -1140,15 +1168,46 @@ class DocumentExportService:
             ).reset_index().rename(columns={c: "name"})
             g = g.sort_values("_val", ascending=False).head(15)
             title = f"By {c.replace('_',' ').title()}"
-            tbl_row = section_header(tbl_row, 1, 4, title.upper())
-            tbl_row = col_headers(tbl_row, 1, [c.replace('_', ' ').title(), "Count", f"{value_col.replace('_',' ').title()}", "% of Value"])
+            # Can we point live formulas at the Data sheet for this pairing?
+            live = None
+            if data_map and c in (data_map.get("cols") or []) and value_col in (data_map.get("cols") or []):
+                k_col = get_column_letter(data_map["cols"].index(c) + 1)
+                v_col = get_column_letter(data_map["cols"].index(value_col) + 1)
+                live = {"k": k_col, "v": v_col,
+                        "r1": data_map["first_row"], "r2": data_map["last_row"]}
+            span = 5 if live else 4
+            tbl_row = section_header(tbl_row, 1, span, title.upper())
+            heads = [c.replace('_', ' ').title(), "Count", f"{value_col.replace('_',' ').title()}", "% of Value"]
+            if live:
+                heads.append("Formula used")
+            tbl_row = col_headers(tbl_row, 1, heads)
             shown_val = 0
             for _, rrow in g.iterrows():
                 pct = (rrow["_val"] / total_value * 100) if total_value else 0
                 shown_val += rrow["_val"]
                 r = tbl_row
-                data_row(r, 1, [str(rrow["name"]), int(rrow["_cnt"]), round(float(rrow["_val"]), 0)])
-                pcell = ws.cell(row=r, column=4, value=pct / 100)
+                name = str(rrow["name"])
+                if live:
+                    # LIVE formulas: these recalculate if the Data sheet is edited.
+                    rng_k = f"Data!${live['k']}${live['r1']}:${live['k']}${live['r2']}"
+                    rng_v = f"Data!${live['v']}${live['r1']}:${live['v']}${live['r2']}"
+                    safe = name.replace('"', '""')
+                    cnt_f = f'=COUNTIF({rng_k},"{safe}")'
+                    sum_f = f'=SUMIF({rng_k},"{safe}",{rng_v})'
+                    ws.cell(row=r, column=1, value=name).font = BODY
+                    ws.cell(row=r, column=1).border = BORDER
+                    ws.cell(row=r, column=1).alignment = L
+                    cc = ws.cell(row=r, column=2, value=cnt_f)
+                    cc.font = BODY; cc.border = BORDER; cc.alignment = R; cc.number_format = "#,##0"
+                    vc = ws.cell(row=r, column=3, value=sum_f)
+                    vc.font = BODY; vc.border = BORDER; vc.alignment = R; vc.number_format = "#,##0"
+                    # Show the formula as text so the method is visible on the page
+                    fc = ws.cell(row=r, column=5, value=sum_f.replace("=", "", 1))
+                    fc.font = SUBT; fc.border = BORDER; fc.alignment = L
+                else:
+                    data_row(r, 1, [name, int(rrow["_cnt"]), round(float(rrow["_val"]), 0)])
+                pcell = ws.cell(row=r, column=4,
+                                value=(f"=IFERROR(C{r}/SUM($C${tbl_row - len(g)}:$C${tbl_row + len(g)}),0)" if False else pct / 100))
                 pcell.number_format = "0.0%"; pcell.font = BODY; pcell.border = BORDER; pcell.alignment = R
                 tbl_row += 1
             # Totals row
@@ -1240,7 +1299,112 @@ class DocumentExportService:
 
         # Make Dashboard the first sheet
         wb.move_sheet("Dashboard", -(len(wb.sheetnames) - 1))
-        return ws
+        return {"value_col": value_col, "breakdown_cols": breakdown_cols}
+
+    def _add_methodology_sheet(self, wb, result: dict, data_map: dict = None,
+                               value_col=None, breakdown_cols=None):
+        """
+        Documents every calculation in the workbook: the live Excel formulas,
+        and the statistical methods (computed in Python, not reproducible as
+        cell formulas). Also records any row truncation so the figures are
+        never silently misleading.
+        """
+        from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+        BRAND = "1F3864"
+        HEAD_FILL = PatternFill("solid", fgColor="D9E1F2")
+        HEAD = Font(name="Calibri", size=10, bold=True, color=BRAND)
+        BODY = Font(name="Calibri", size=10)
+        MONO = Font(name="Consolas", size=9.5)
+        TITLE = Font(name="Calibri", size=14, bold=True, color=BRAND)
+        WARN = Font(name="Calibri", size=10, bold=True, color="C00000")
+        thin = Side(style="thin", color="BFBFBF")
+        BORDER = Border(left=thin, right=thin, top=thin, bottom=thin)
+        L = Alignment(horizontal="left", vertical="top", wrap_text=True)
+
+        ms = wb.create_sheet("Methodology")
+        ms.sheet_view.showGridLines = False
+        ms["A1"] = "Methodology & Formulas"
+        ms["A1"].font = TITLE
+        ms["A2"] = "How every figure in this workbook was calculated."
+        ms["A2"].font = Font(name="Calibri", size=9, italic=True, color="595959")
+        r = 4
+
+        # Truncation warning — critical for honesty about live formulas
+        if data_map and data_map.get("truncated"):
+            ms.cell(row=r, column=1,
+                    value=(f"NOTE: the Data sheet contains {data_map['written_rows']:,} of "
+                           f"{data_map['total_rows']:,} total rows. Live Excel formulas on the "
+                           f"Dashboard sum only the rows present in this workbook, so they may "
+                           f"differ from figures computed over the full dataset.")).font = WARN
+            ms.cell(row=r, column=1).alignment = L
+            ms.merge_cells(start_row=r, start_column=1, end_row=r, end_column=3)
+            ms.row_dimensions[r].height = 30
+            r += 2
+
+        # Table header
+        for c, h in enumerate(["What", "How it was calculated", "Excel formula (if live)"], 1):
+            cell = ms.cell(row=r, column=c, value=h)
+            cell.font = HEAD; cell.fill = HEAD_FILL; cell.border = BORDER; cell.alignment = L
+        r += 1
+
+        def row(what, how, formula=""):
+            nonlocal r
+            ms.cell(row=r, column=1, value=what).font = BODY
+            ms.cell(row=r, column=2, value=how).font = BODY
+            fc = ms.cell(row=r, column=3, value=formula)
+            fc.font = MONO if formula else BODY
+            for c in range(1, 4):
+                ms.cell(row=r, column=c).border = BORDER
+                ms.cell(row=r, column=c).alignment = L
+            r += 1
+
+        cols = (data_map or {}).get("cols") or []
+        vcol = value_col or "the value column"
+
+        # Dashboard calculations
+        if breakdown_cols:
+            for c in breakdown_cols:
+                nice = str(c).replace("_", " ").title()
+                if c in cols and value_col in cols:
+                    from openpyxl.utils import get_column_letter as _gl
+                    k = _gl(cols.index(c) + 1); v = _gl(cols.index(value_col) + 1)
+                    r1, r2 = data_map["first_row"], data_map["last_row"]
+                    row(f"By {nice} — Count",
+                        f"Number of records in each {nice} group.",
+                        f'COUNTIF(Data!${k}${r1}:${k}${r2}, "<group>")')
+                    row(f"By {nice} — {str(vcol).replace('_',' ').title()}",
+                        f"Sum of {vcol} for each {nice} group. Live formula — recalculates if the Data sheet changes.",
+                        f'SUMIF(Data!${k}${r1}:${k}${r2}, "<group>", Data!${v}${r1}:${v}${r2})')
+                else:
+                    row(f"By {nice}", f"Sum of {vcol} grouped by {nice}, computed in Python (pandas groupby).", "")
+            row("% of Value", "Each group's value divided by the total across all groups shown.", "group value / total")
+
+        row("Key Metrics — totals",
+            f"Column sums and averages over the analysed rows (pandas).", "")
+        row("Distinct counts", "Number of unique values in the column (pandas nunique).", "")
+        row("Cross-tab (x Recency)",
+            "Rows split into buckets by the days-since column (0-30, over 30), then value and count summed per bucket per group.", "")
+
+        # Statistical methods — cannot be Excel formulas
+        stats_used = set()
+        for i in (result.get("insights") or []):
+            src = str(i.get("source", "") or "")
+            if src:
+                stats_used.add(src.split("\u00b7")[0].strip())
+        for src in sorted(x for x in stats_used if x):
+            if "Z-score" in src:
+                row("Anomaly detection", "Z-score: (value - mean) / standard deviation. Points beyond 3 sigma flagged as anomalies. Computed in Python (NumPy).", "")
+            elif "Pearson" in src or "correlation" in src.lower():
+                row("Correlations", "Pearson correlation coefficient with Bonferroni correction for multiple comparisons (SciPy).", "")
+            elif "regression" in src.lower() or "trend" in src.lower():
+                row("Trends", "Ordinary least squares linear regression; R-squared and p-value reported (SciPy/statsmodels).", "")
+            elif src:
+                row("Finding method", src, "")
+
+        ms.column_dimensions["A"].width = 34
+        ms.column_dimensions["B"].width = 68
+        ms.column_dimensions["C"].width = 52
+        return ms
 
     def _add_finance_excel(self, wb, finance, HEAD_FONT, HEAD_FILL, BODY_FONT,
                            BRAND, BORDER, LEFT, RIGHT, _num, _autosize, _style_table):
