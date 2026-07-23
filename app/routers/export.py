@@ -18,11 +18,15 @@ class ExportRequest(BaseModel):
     result: dict
     finance: Optional[dict] = None
     chart_images: Optional[list] = None   # [{title, subtitle, image(base64)}]
+    title: Optional[str] = None           # custom document heading
+    subtitle: Optional[str] = None        # custom document subheading
+    line_spacing: Optional[float] = 1.5   # 1.5 or 2.0
 @router.post("/word")
 async def export_word(request: ExportRequest):
     try:
         from app.services.document_service import document_service
-        doc_bytes = document_service.build_word_report(request.result, request.finance, request.chart_images)
+        doc_bytes = document_service.build_word_report(request.result, request.finance, request.chart_images,
+            doc_title=request.title, doc_subtitle=request.subtitle, line_spacing=request.line_spacing)
         industry = request.result.get("industry", "report").replace(" ", "_")
         filename = f"DataMind_{industry}_{datetime.now().strftime('%Y%m%d')}.docx"
         return StreamingResponse(io.BytesIO(doc_bytes),
@@ -35,7 +39,8 @@ async def export_word(request: ExportRequest):
 async def export_pdf(request: ExportRequest):
     try:
         from app.services.document_service import document_service
-        pdf_bytes = document_service.build_pdf_report(request.result, request.finance, request.chart_images)
+        pdf_bytes = document_service.build_pdf_report(request.result, request.finance, request.chart_images,
+            doc_title=request.title, doc_subtitle=request.subtitle, line_spacing=request.line_spacing)
         industry = request.result.get("industry", "report").replace(" ", "_")
         filename = f"DataMind_{industry}_{datetime.now().strftime('%Y%m%d')}.pdf"
         return StreamingResponse(io.BytesIO(pdf_bytes), media_type="application/pdf",
@@ -60,7 +65,8 @@ async def export_pptx(request: ExportRequest):
 async def export_xlsx(request: ExportRequest):
     try:
         from app.services.document_service import document_service
-        xlsx_bytes = document_service.build_excel_report(request.result, request.finance, request.chart_images)
+        xlsx_bytes = document_service.build_excel_report(request.result, request.finance, request.chart_images,
+            doc_title=request.title, doc_subtitle=request.subtitle, line_spacing=request.line_spacing)
         industry = request.result.get("industry", "report").replace(" ", "_")
         filename = f"DataMind_{industry}_{datetime.now().strftime('%Y%m%d')}.xlsx"
         return StreamingResponse(io.BytesIO(xlsx_bytes),
