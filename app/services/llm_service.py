@@ -11,6 +11,29 @@ from app.models.schemas import LLMProvider
 
 logger = logging.getLogger(__name__)
 
+
+async def _log_usage(user_id, provider: str, tokens: int, industry: str = None):
+    """Append one row to usage_log for admin cost reporting. Never raises."""
+    if not tokens:
+        return
+    try:
+        import uuid
+        from datetime import datetime, timezone
+        from app.database import connect
+        db = await connect()
+        if db is None:
+            return
+        await db.usage_log.insert_one({
+            "_id": str(uuid.uuid4()),
+            "at": datetime.now(timezone.utc),
+            "user_id": user_id,
+            "provider": provider,
+            "tokens": int(tokens or 0),
+            "industry": industry,
+        })
+    except Exception:
+        pass
+
 INDUSTRY_CONTEXTS = {
     "finance": """You are a CFO-level financial data analyst with 30 years experience.
 Your analysis must reference: ROI, EBITDA, NPV, cash conversion cycle, working capital ratios, liquidity, leverage.
@@ -145,6 +168,7 @@ class EliteLLMService:
         max_tokens: int = 2500,
         temperature: float = 0.1,
         elite_context: Optional[dict] = None,
+        user_id: Optional[str] = None,
     ) -> tuple[str, int, str]:
         """
         Returns (response_text, tokens_used, provider_used).
@@ -163,6 +187,12 @@ class EliteLLMService:
                 logger.info(f"Trying {name}")
                 text, tokens = await fn(messages, system, mdl, max_tokens, temperature)
                 logger.info(f"{name} succeeded — {tokens} tokens")
+                # Record usage so the admin dashboard can attribute cost.
+                # Fire-and-forget: never let logging break a response.
+                try:
+                    await _log_usage(user_id, name, tokens, industry)
+                except Exception as _e:
+                    logger.debug(f"usage log skipped: {_e}")
                 return text, tokens, name
             except Exception as e:
                 last_error = e
