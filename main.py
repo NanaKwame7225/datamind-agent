@@ -171,6 +171,12 @@ try:
     logger.info("Notebooks router loaded")
 except Exception as e:
     logger.error(f"Notebooks router failed: {e}", exc_info=True)
+try:
+    from app.routers import admin as admin_router
+    app.include_router(admin_router.router, prefix="/api/v1/admin", tags=["Admin"])
+    logger.info("Admin router loaded")
+except Exception as e:
+    logger.warning(f"Admin router not loaded: {e}")
 
 # ── Database warm-up (auth + history) ─────────────────────────────────────────
 @app.on_event("startup")
