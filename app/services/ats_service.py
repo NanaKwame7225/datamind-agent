@@ -12,6 +12,10 @@ Design decisions:
   • Criteria: the AI proposes them from the JD, HR edits/adds/removes and sets
     weights. HR always has the final say — their weights are authoritative.
   • Every sub-score must cite CV text. No quote, no credit.
+  • Criteria are matched to the AI's scoring response by POSITION/ID, never by
+    re-matching free text — this is what keeps weights (and therefore the
+    overall score) from silently collapsing to 0 if the model rephrases a
+    criterion name in its response.
 
 Fairness notes (deliberate, not incidental):
   - Scoring is against job-relevant criteria only.
@@ -94,6 +98,17 @@ def extract_text(file_bytes: bytes, filename: str) -> tuple[str, str]:
     except Exception as e:
         logger.error(f"CV extract failed for {filename}: {e}")
         return "", f"Could not read this file: {str(e)[:120]}"
+
+
+def verdict_for(score: float) -> str:
+    """Plain-language label for an overall score, used in the summary panel."""
+    if score >= 90:
+        return "Exceptional fit"
+    if score >= 70:
+        return "Strong fit"
+    if score >= 50:
+        return "Partial fit"
+    return "Weak fit"
 
 
 class ATSService:
@@ -255,10 +270,12 @@ class ATSService:
             "anonymised": bool(job.get("anonymise", True)),
             "redacted": redacted,
             "score": result["score"],
+            "verdict": verdict_for(result["score"]),
             "breakdown": result["breakdown"],
             "strengths": result.get("strengths", []),
             "gaps": result.get("gaps", []),
             "summary": result.get("summary", ""),
+            "capped_by_must_have": result.get("capped_by_must_have", False),
             "created_at": now(),
         }
         if cands is not None:
@@ -268,27 +285,32 @@ class ATSService:
 
     async def _llm_score(self, job: dict, cv_text: str) -> dict:
         crits = job.get("criteria", [])
+        # Each criterion gets a stable numeric ID — this is what the AI must
+        # reference back, instead of retyping the criterion's name. Retyping
+        # is what silently broke weight-matching before (see module docstring).
         crit_block = "\n".join(
-            f"- {c['name']} (weight {c['weight']}%{', MUST-HAVE' if c.get('must_have') else ''}): {c.get('description','')}"
-            for c in crits)
+            f"[{i}] {c['name']} (weight {c['weight']}%{', MUST-HAVE' if c.get('must_have') else ''}): {c.get('description','')}"
+            for i, c in enumerate(crits))
         prompt = (
             "You are an expert, fair recruiter scoring ONE candidate against a rubric.\n\n"
             "ABSOLUTE RULES:\n"
             "1. Score ONLY against the criteria below. Nothing else counts.\n"
-            "2. EVERY sub-score must cite a short verbatim quote from the CV as evidence. "
+            "2. For each criterion, return its exact numeric id (the number in [brackets] "
+            "below) in a field called \"criterion_id\" — do NOT retype the criterion name.\n"
+            "3. EVERY sub-score must cite a short verbatim quote from the CV as evidence. "
             "If you cannot find evidence, score it low and say 'No evidence found' — never invent.\n"
-            "3. IGNORE and never reward or penalise: name, age, gender, nationality, marital "
+            "4. IGNORE and never reward or penalise: name, age, gender, nationality, marital "
             "status, photos, school prestige, employment gaps, or writing flourish. Judge "
             "demonstrated capability only.\n"
-            "4. Redacted markers like [NAME REMOVED] are deliberate — do not speculate about them.\n"
-            "5. Be calibrated: 90+ is exceptional and rare, 70-89 strong, 50-69 partial, "
+            "5. Redacted markers like [NAME REMOVED] are deliberate — do not speculate about them.\n"
+            "6. Be calibrated: 90+ is exceptional and rare, 70-89 strong, 50-69 partial, "
             "below 50 weak. Do not inflate.\n\n"
             f"ROLE: {job.get('title')}\n\n"
             f"SCORING CRITERIA:\n{crit_block}\n\n"
             f"JOB DESCRIPTION (context):\n{(job.get('jd_text') or '')[:2500]}\n\n"
             f"CANDIDATE CV:\n{cv_text}\n\n"
-            'Reply ONLY with JSON, no preamble:\n'
-            '{"breakdown":[{"criterion":"...","score":0-100,"evidence":"verbatim quote from CV",'
+            'Reply ONLY with JSON, no preamble, one breakdown entry per criterion id above:\n'
+            '{"breakdown":[{"criterion_id":0,"score":0-100,"evidence":"verbatim quote from CV",'
             '"reasoning":"one line"}],"strengths":["..."],"gaps":["..."],'
             '"summary":"2 sentences on fit for THIS role"}'
         )
@@ -302,26 +324,42 @@ class ATSService:
             data = _parse_json(text)
             if not data or not data.get("breakdown"):
                 return {"success": False, "error": "Scoring returned an unreadable result. Try again."}
-            # Weighted total — computed HERE, never trusted to the model's arithmetic
+
+            # Weighted total — computed HERE, never trusted to the model's arithmetic.
+            # Matching is by criterion_id (position), NEVER by re-matching free text —
+            # that's what previously let weight silently collapse to 0 for every
+            # criterion whenever the model rephrased a name instead of echoing it back.
             total, breakdown = 0.0, []
-            by_name = {c["name"].lower(): c for c in crits}
-            for b in data["breakdown"]:
-                c = by_name.get(str(b.get("criterion", "")).lower())
+            for i, b in enumerate(data["breakdown"]):
+                cid = b.get("criterion_id")
+                c = crits[cid] if isinstance(cid, int) and 0 <= cid < len(crits) else None
+                if c is None:
+                    # Fallback: if the model omitted/mangled the id, match by the
+                    # position the entry appears in — still never trusts free text.
+                    c = crits[i] if i < len(crits) else None
+                    if c is not None:
+                        logger.warning(
+                            f"ATS scoring: criterion_id missing/invalid for entry {i}, "
+                            f"fell back to positional match ('{c['name']}').")
                 w = float(c["weight"]) if c else 0.0
                 sc = max(0.0, min(100.0, float(b.get("score", 0))))
                 total += sc * (w / 100.0)
                 breakdown.append({
-                    "criterion": b.get("criterion"), "score": round(sc),
-                    "weight": w, "evidence": (b.get("evidence") or "")[:400],
+                    "criterion": c["name"] if c else f"Unmatched criterion {i}",
+                    "score": round(sc),
+                    "weight": w,
+                    "evidence": (b.get("evidence") or "")[:400],
                     "reasoning": (b.get("reasoning") or "")[:300],
                     "must_have": bool(c.get("must_have")) if c else False,
                 })
+
             # A missed must-have caps the overall score — a hard gate, not a nudge
             missed = [b for b in breakdown if b["must_have"] and b["score"] < 50]
             capped = False
             if missed:
                 total = min(total, 49.0)
                 capped = True
+
             return {"success": True, "score": round(total, 1), "breakdown": breakdown,
                     "strengths": data.get("strengths", [])[:6],
                     "gaps": data.get("gaps", [])[:6],
@@ -345,7 +383,11 @@ class ATSService:
             items.append(_cand_public(d))
         for i, c in enumerate(items, 1):
             c["rank"] = i
-        return {"success": True, "items": items, "anonymised": bool(job.get("anonymise", True))}
+        # Pool-level summary — average score and per-criterion averages across
+        # every candidate scored so far for this job.
+        pool_summary = _pool_summary(items)
+        return {"success": True, "items": items, "pool_summary": pool_summary,
+                "anonymised": bool(job.get("anonymise", True))}
 
     async def delete_candidate(self, user_id: str, cand_id: str, workspace_id: str = None) -> dict:
         cands = await self._cands()
@@ -410,10 +452,56 @@ def _job_public(d: dict) -> dict:
 def _cand_public(d: dict) -> dict:
     return {"id": d["_id"], "job_id": d.get("job_id"), "filename": d.get("filename"),
             "candidate_name": d.get("candidate_name"), "score": d.get("score"),
+            "verdict": d.get("verdict") or verdict_for(d.get("score", 0)),
             "breakdown": d.get("breakdown", []), "strengths": d.get("strengths", []),
             "gaps": d.get("gaps", []), "summary": d.get("summary", ""),
+            "capped_by_must_have": d.get("capped_by_must_have", False),
             "anonymised": d.get("anonymised", True), "redacted": d.get("redacted", {}),
             "created_at": _iso(d.get("created_at"))}
+
+def _pool_summary(items: list) -> dict:
+    """Overview across all candidates scored for a job — average score, and
+    which criterion is dragging the pool down (usually the most useful signal
+    for a recruiter deciding whether to widen sourcing or relax a bar)."""
+    if not items:
+        return {}
+    scores = [it["score"] for it in items if it.get("score") is not None]
+    if not scores:
+        return {}
+    pool_average = round(sum(scores) / len(scores), 1)
+
+    # Aggregate per-criterion averages across the whole pool
+    by_crit = {}
+    for it in items:
+        for b in it.get("breakdown", []):
+            name = b.get("criterion")
+            if not name:
+                continue
+            by_crit.setdefault(name, {"scores": [], "weight": b.get("weight", 0),
+                                       "no_evidence": 0})
+            by_crit[name]["scores"].append(b.get("score", 0))
+            if (b.get("evidence") or "").strip().lower() in ("no evidence found", ""):
+                by_crit[name]["no_evidence"] += 1
+
+    criteria = []
+    for name, agg in by_crit.items():
+        avg = round(sum(agg["scores"]) / len(agg["scores"]), 1) if agg["scores"] else 0.0
+        criteria.append({
+            "name": name,
+            "avg_score": avg,
+            "weight": agg["weight"],
+            "no_evidence_count": agg["no_evidence"],
+            "contribution": round(avg * (agg["weight"] / 100.0), 1),
+        })
+    criteria.sort(key=lambda c: c["weight"], reverse=True)
+
+    return {
+        "count": len(items),
+        "pool_average": pool_average,
+        "pool_verdict": verdict_for(pool_average),
+        "criteria": criteria,
+        "weakest_criterion": min(criteria, key=lambda c: c["avg_score"])["name"] if criteria else None,
+    }
 
 def _iso(v):
     return v.isoformat() if isinstance(v, datetime) else v
